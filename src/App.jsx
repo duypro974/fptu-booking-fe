@@ -69,18 +69,29 @@ function App() {
             {/* COMMON */}
             <Route path="profile" element={<ProfilePage />} />
 
-            {/* STUDENT */}
+            {/* STUDENT & LECTURER & CLUB LEADER */}
             <Route index element={<Navigate to="/dashboard" />} />
             <Route path="dashboard" element={<DashboardPage />} />
             <Route path="booking" element={<RoomSearch />} />
             <Route path="history" element={<MyBookings />} />
             
-            {/* STAFF */}
+            {/* SECURITY GUARD */}
+            <Route path="security/schedule" element={<div className="text-center pt-20">Security Schedule - Coming Soon</div>} />
+            <Route path="security/checkin" element={<div className="text-center pt-20">Security Check-in - Coming Soon</div>} />
+            <Route path="security/report" element={<div className="text-center pt-20">Security Report - Coming Soon</div>} />
+            
+            {/* FACILITY ADMIN */}
+            <Route path="admin-facility" element={<FacilityDashboard />} />
+            <Route path="admin-facility/approvals" element={<ApprovalList />} />
+            <Route path="admin-facility/rooms" element={<div className="text-center pt-20">Facility Management - Coming Soon</div>} />
+            <Route path="admin-facility/clubs" element={<div className="text-center pt-20">Club Management - Coming Soon</div>} />
+            <Route path="admin-facility/maintenance" element={<div className="text-center pt-20">Maintenance & Relocation - Coming Soon</div>} />
+            
+            {/* CAMPUS ADMIN */}
             <Route path="admin-campus" element={<AdminDashboard />} />
             <Route path="admin-campus/approvals" element={<ApprovalList />} />
-
-            {/* BOSS */}
-            <Route path="admin-facility" element={<FacilityDashboard />} />
+            <Route path="admin-campus/staff" element={<div className="text-center pt-20">Staff Management - Coming Soon</div>} />
+            <Route path="admin-campus/reports" element={<div className="text-center pt-20">Reports & Analytics - Coming Soon</div>} />
           </Route>
           
           <Route path="*" element={<div className="text-center pt-20">404 - Not Found</div>} />

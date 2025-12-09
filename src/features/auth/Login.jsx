@@ -30,13 +30,16 @@ export default function Login() {
       // Gọi Login logic (Campus sẽ được xử lý lại bên trong api)
       const userData = await login(email, password, campus);
       
-      // ĐIỀU HƯỚNG THEO 3 ROLE
+      // ĐIỀU HƯỚNG THEO ROLE
       if (userData.role === 'facility_admin') {
         navigate("/admin-facility");
       } else if (userData.role === 'campus_admin') {
         navigate("/admin-campus");
+      } else if (userData.role === 'security_guard') {
+        navigate("/security/schedule");
       } else {
-        navigate("/dashboard"); // Student
+        // Student, Lecturer, Club Leader đều vào dashboard
+        navigate("/dashboard");
       }
     } catch (err) {
       setError(err.message);
