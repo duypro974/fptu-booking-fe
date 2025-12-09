@@ -7,9 +7,7 @@ export const api = {
   getCampuses: () => [
     { id: "hcm", name: "FPTU TP.HCM (Quận 9)" },
     { id: "hn", name: "FPTU Hòa Lạc (Hà Nội)" },
-    { id: "dn", name: "FPTU Đà Nẵng" },
-    { id: "qn", name: "FPTU Quy Nhơn" },
-    { id: "ct", name: "FPTU Cần Thơ" },
+    
   ],
 
   login: async (email, password, selectedCampusId) => {
@@ -26,7 +24,7 @@ export const api = {
     const selectedCampusName = api.getCampuses().find(c => c.id === selectedCampusId)?.name;
 
     // --- 1. ADMIN TỔNG (Quyền cao nhất - Vào đâu cũng được hoặc vào Dashboard tổng) ---
-    if (email.includes("admin.tong")) {
+    if (email.includes("admin")) {
       userRole = "facility_admin";
       campusName = "Toàn hệ thống FPTU";
       // Admin tổng không bị ràng buộc bởi campus đã chọn (hoặc có thể để họ chọn để xem view của campus đó)
@@ -42,9 +40,7 @@ export const api = {
       let assignedCampusId = "";
       if (email.includes("hcm")) assignedCampusId = "hcm";
       else if (email.includes("hn")) assignedCampusId = "hn";
-      else if (email.includes("dn")) assignedCampusId = "dn";
-      else if (email.includes("qn")) assignedCampusId = "qn";
-      else if (email.includes("ct")) assignedCampusId = "ct";
+  
       else assignedCampusId = "hcm"; // Fallback nếu không detect được
 
       // >> LOGIC CHECK LỖI Ở ĐÂY <<
