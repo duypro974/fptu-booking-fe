@@ -1,7 +1,7 @@
 // src/features/auth/Login.jsx
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Mail, Lock, ArrowRight, MapPin, AlertCircle, Eye, EyeOff } from "lucide-react";
+import { Mail, Lock, ArrowRight, MapPin, AlertCircle, Eye, EyeOff, Info, ChevronDown } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { api } from "../../services/api";
 import Button from "../../components/ui/Button";
@@ -18,6 +18,7 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showTestAccounts, setShowTestAccounts] = useState(false);
 
   const campuses = api.getCampuses();
 
@@ -30,11 +31,9 @@ export default function Login() {
       // Gọi Login logic (Campus sẽ được xử lý lại bên trong api)
       const userData = await login(email, password, campus);
       
-      // ĐIỀU HƯỚNG THEO 3 ROLE
+      // ĐIỀU HƯỚNG THEO ROLE
       if (userData.role === 'facility_admin') {
         navigate("/admin-facility");
-      } else if (userData.role === 'campus_admin') {
-        navigate("/admin-campus");
       } else {
         navigate("/dashboard"); // Student
       }
@@ -73,7 +72,7 @@ export default function Login() {
                 </select>
               </div>
               <p className="text-xs text-gray-400 mt-1.5 italic">
-                *Cán bộ quản lý (Staff) sẽ tự động chuyển về cơ sở được phân công.
+                *Facility Admin sẽ tự động chuyển về cơ sở được phân công (nếu có trong email).
               </p>
             </div>
 
@@ -122,6 +121,54 @@ export default function Login() {
               {loading ? "Đang xử lý..." : "Đăng nhập ngay"}
             </Button>
           </form>
+
+          {/* Test Accounts Guide */}
+          <div className="mt-6 border-t border-gray-200 pt-6">
+            <button
+              type="button"
+              onClick={() => setShowTestAccounts(!showTestAccounts)}
+              className="w-full flex items-center justify-between text-sm text-gray-600 hover:text-gray-900 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Info className="w-4 h-4" />
+                <span className="font-medium">Tài khoản test</span>
+              </div>
+              <ChevronDown className={`w-4 h-4 transition-transform ${showTestAccounts ? 'rotate-180' : ''}`} />
+            </button>
+            
+            {showTestAccounts && (
+              <div className="mt-4 space-y-3 text-sm">
+                <div 
+                  className="bg-orange-50 border border-orange-200 rounded-lg p-3 cursor-pointer hover:bg-orange-100 transition-colors"
+                  onClick={() => {
+                    setEmail("facility.hcm@fpt.edu.vn");
+                    setPassword("123456");
+                    setCampus("hcm");
+                  }}
+                >
+                  <p className="font-semibold text-orange-900 mb-2">🏢 Facility Admin</p>
+                  <p className="text-orange-800 mb-1">Email: <code className="bg-white px-2 py-0.5 rounded text-xs">facility.hcm@fpt.edu.vn</code></p>
+                  <p className="text-orange-700 text-xs">Password: Bất kỳ</p>
+                  <p className="text-orange-600 text-xs mt-1">→ Quản lý Phòng, Thiết bị, CLB + Duyệt booking</p>
+                  <p className="text-orange-500 text-xs mt-2 italic">👆 Click để tự điền</p>
+                </div>
+                
+                <div 
+                  className="bg-green-50 border border-green-200 rounded-lg p-3 cursor-pointer hover:bg-green-100 transition-colors"
+                  onClick={() => {
+                    setEmail("student@fpt.edu.vn");
+                    setPassword("123456");
+                  }}
+                >
+                  <p className="font-semibold text-green-900 mb-2">👨‍🎓 Student</p>
+                  <p className="text-green-800 mb-1">Email: <code className="bg-white px-2 py-0.5 rounded text-xs">student@fpt.edu.vn</code></p>
+                  <p className="text-green-700 text-xs">Password: Bất kỳ</p>
+                  <p className="text-green-600 text-xs mt-1">→ Đặt phòng, xem lịch sử</p>
+                  <p className="text-green-500 text-xs mt-2 italic">👆 Click để tự điền</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
       <div className="hidden lg:block relative flex-1">

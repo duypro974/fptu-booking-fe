@@ -1,4 +1,4 @@
-import { Calendar, LayoutDashboard, History, Shield, Globe, CheckSquare, Users } from "lucide-react";
+import { Calendar, LayoutDashboard, History, CheckSquare, Package, BarChart3, Clock } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../context/AuthContext";
@@ -13,19 +13,15 @@ export default function Sidebar({ isOpen }) {
     { icon: History, label: "Lịch sử", path: "/history" },
   ];
 
-  const STAFF_MENU = [
-    { icon: LayoutDashboard, label: "Tổng quan Cơ sở", path: "/admin-campus" },
-    { icon: CheckSquare, label: "Duyệt yêu cầu", path: "/admin-campus/approvals" },
-    { icon: Shield, label: "Quản lý Phòng", path: "/admin-campus/rooms" },
-  ];
-
   const FACILITY_ADMIN_MENU = [
-    { icon: Globe, label: "Toàn hệ thống", path: "/admin-facility" },
-    { icon: Users, label: "Quản lý Tài khoản", path: "/admin-facility/users" },
+    { icon: LayoutDashboard, label: "Tổng quan", path: "/admin-facility" },
+    { icon: Package, label: "Quản lý Tài nguyên", path: "/admin-facility/resources" },
+    { icon: CheckSquare, label: "Duyệt yêu cầu", path: "/admin-facility/approvals" },
+    { icon: BarChart3, label: "Thống kê", path: "/admin-facility/statistics" },
+    { icon: Clock, label: "Lịch sử", path: "/admin-facility/history" },
   ];
 
   let menuItems = STUDENT_MENU;
-  if (user?.role === 'campus_admin') menuItems = STAFF_MENU;
   if (user?.role === 'facility_admin') menuItems = FACILITY_ADMIN_MENU;
 
   return (

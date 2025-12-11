@@ -13,9 +13,11 @@ import ProfilePage from "./pages/ProfilePage"; // Trang cá nhân mới tạo
 import DashboardPage from "./pages/DashboardPage";
 import RoomSearch from "./features/booking/RoomSearch";
 import MyBookings from "./features/booking/MyBookings";
-import AdminDashboard from "./features/admin/Dashboard";
 import ApprovalList from "./features/admin/ApprovalList";
-import FacilityDashboard from "./features/admin/FacilityDashboard";
+import FacilityAdminDashboard from "./features/admin/FacilityAdminDashboard";
+import ResourceManagement from "./features/admin/ResourceManagement";
+import Statistics from "./features/admin/Statistics";
+import HistoryLog from "./features/admin/HistoryLog";
 
 const MainLayout = () => {
   // Mặc định Sidebar mở trên PC (true)
@@ -75,12 +77,12 @@ function App() {
             <Route path="booking" element={<RoomSearch />} />
             <Route path="history" element={<MyBookings />} />
             
-            {/* STAFF */}
-            <Route path="admin-campus" element={<AdminDashboard />} />
-            <Route path="admin-campus/approvals" element={<ApprovalList />} />
-
-            {/* BOSS */}
-            <Route path="admin-facility" element={<FacilityDashboard />} />
+            {/* FACILITY ADMIN (Quản lý Phòng tại Campus + Duyệt booking) */}
+            <Route path="admin-facility" element={<FacilityAdminDashboard />} />
+            <Route path="admin-facility/resources" element={<ResourceManagement />} />
+            <Route path="admin-facility/approvals" element={<ApprovalList />} />
+            <Route path="admin-facility/statistics" element={<Statistics />} />
+            <Route path="admin-facility/history" element={<HistoryLog />} />
           </Route>
           
           <Route path="*" element={<div className="text-center pt-20">404 - Not Found</div>} />
