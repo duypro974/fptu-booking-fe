@@ -22,7 +22,10 @@ export default function Sidebar({ isOpen }) {
   ];
 
   let menuItems = STUDENT_MENU;
-  if (user?.role === 'facility_admin') menuItems = FACILITY_ADMIN_MENU;
+  // Kiểm tra cả lowercase và uppercase role
+  if (user?.role === 'facility_admin' || user?.role === 'FACILITY_ADMIN') {
+    menuItems = FACILITY_ADMIN_MENU;
+  }
 
   return (
     <aside className={cn(

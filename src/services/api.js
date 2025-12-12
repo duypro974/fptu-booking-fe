@@ -1,7 +1,16 @@
 /* eslint-disable no-unused-vars */
 // src/services/api.js
 
+import { apiRequest } from '../config/api';
+
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Helper: Map campus string (hcm, hn) sang campusId number cho backend
+const getCampusId = (campus) => {
+  if (typeof campus === 'number') return campus;
+  const campusMap = { hcm: 2, hn: 1, dn: 3, ct: 4, qn: 5 };
+  return campusMap[campus?.toLowerCase()] || null;
+};
 
 // ========== MOCK STORE (In-Memory Database) ==========
 // Dùng để test CRUD - Data sẽ mất khi refresh trang
@@ -186,61 +195,79 @@ export const api = {
   ],
 
   login: async (email, password, selectedCampusId) => {
-    await delay(800); 
-
-    if (!email.includes("@fpt.edu.vn")) {
-      throw new Error("Vui lòng sử dụng email @fpt.edu.vn");
-    }
-
-    let userRole = "student";
-    let campusName = "";
-    
-    // Lấy thông tin campus mà người dùng ĐANG CHỌN ở dropdown
-    const selectedCampusName = api.getCampuses().find(c => c.id === selectedCampusId)?.name;
-
-    // --- 1. FACILITY ADMIN (Quản lý phòng tại Campus + Duyệt booking) ---
-    if (email.includes("facility.") || email.includes("admin")) {
-      userRole = "facility_admin";
+    try {
+      // Gọi API login thật (không dùng apiRequest vì chưa có token)
+      const campusIdNum = getCampusId(selectedCampusId);
+      const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:6969/api';
       
-      // Xác định campus CỐ ĐỊNH của Facility Admin dựa vào email
-      let assignedCampusId = "";
-      if (email.includes("hcm")) assignedCampusId = "hcm";
-      else if (email.includes("hn")) assignedCampusId = "hn";
-      else assignedCampusId = selectedCampusId; // Nếu không detect được thì dùng campus đã chọn
+      const response = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email,
+          password,
+          campusId: campusIdNum
+        })
+      });
 
-      // Nếu có campus cụ thể trong email, kiểm tra
-      if (assignedCampusId && assignedCampusId !== selectedCampusId && (email.includes("hcm") || email.includes("hn"))) {
-        throw new Error(
-          `Lỗi: Tài khoản Facility Admin này chỉ có quyền truy cập ${assignedCampusId.toUpperCase()}, không thể đăng nhập vào ${selectedCampusName}.`
-        );
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Đăng nhập thất bại' }));
+        throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
       }
 
-      campusName = selectedCampusName;
-      selectedCampusId = assignedCampusId || selectedCampusId;
-    } 
-    
-    // --- 2. SINH VIÊN (Thoải mái) ---
-    else {
-      userRole = "student";
-      campusName = selectedCampusName;
-    }
+      const data = await response.json();
+      console.log('[Login] Backend response:', data);
+      console.log('[Login] User object:', data.user);
 
-    // Trả về kết quả thành công
-    const roleNames = {
-      student: "Nguyễn Văn Sinh Viên",
-      facility_admin: "Nhân viên Quản lý Phòng"
-    };
+      // Map backend response sang frontend format
+      // Lấy tên từ backend (có thể là name, fullName, firstName + lastName, etc.)
+      const userName = data.user?.name || 
+                      data.user?.fullName || 
+                      data.user?.firstName || 
+                      (data.user?.firstName && data.user?.lastName ? `${data.user.firstName} ${data.user.lastName}` : null) ||
+                      data.name || 
+                      data.fullName ||
+                      null;
+      
+      if (!userName) {
+        console.error('[Login] Backend response structure:', JSON.stringify(data, null, 2));
+        throw new Error('Backend không trả về tên người dùng. Vui lòng kiểm tra cấu trúc response.');
+      }
 
+      // Lấy campus name từ backend (có thể trong data.user.campus.name hoặc data.campusName)
+      const backendCampusName = data.user?.campus?.name || 
+                                data.user?.campusName || 
+                                data.campusName || 
+                                data.user?.campus?.campusName;
+      
+      // Map role từ backend (có thể là uppercase) sang lowercase
+      let backendRole = (data.user?.role || data.role || "student").toLowerCase();
+      
+      // Lấy campus ID từ backend (có thể là number hoặc string)
+      const backendCampusId = data.user?.campus?.id || data.user?.campusId || data.campusId;
+      // Map campus ID number sang string nếu cần
+      const campusMap = { 1: "hn", 2: "hcm", 3: "dn", 4: "ct", 5: "qn" };
+      const campusString = typeof backendCampusId === 'number' 
+        ? campusMap[backendCampusId] || selectedCampusId
+        : (backendCampusId || selectedCampusId);
+      
     return { 
-      id: 123,
-      name: roleNames[userRole] || "Người dùng",
-      email: email,
-      role: userRole,
-      campus: selectedCampusId,
-      campusName: campusName,
-      avatar: `https://ui-avatars.com/api/?name=${userRole}&background=random&bold=true`,
-      token: "fake-jwt-token" 
-    };
+        id: data.user?.id || data.id,
+        name: userName, // Lấy tên từ backend, không dùng fallback
+        email: data.user?.email || data.email || email,
+        role: backendRole,
+        campus: campusString,
+        campusName: backendCampusName || api.getCampuses().find(c => c.id === campusString)?.name || "",
+        avatar: data.user?.avatar || data.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=random&bold=true`,
+        token: data.token || data.accessToken || data.user?.token
+      };
+    } catch (error) {
+      console.error('[Login] API Error:', error);
+      // Không có fallback mock, throw error luôn
+      throw error;
+    }
   },
 
   // ... (Các hàm getRooms giữ nguyên)
@@ -430,249 +457,422 @@ export const api = {
   },
 
   // ========== RESOURCE MANAGEMENT APIs ==========
-  // TODO: Nối API thật sau - Các endpoint này sẽ gọi backend thực tế
-  // Khi nối API, thay thế toàn bộ logic bên dưới bằng fetch() calls
+  
+  // Facility Types
+  getFacilityTypes: async () => {
+    try {
+      const types = await apiRequest('/facility-types');
+      return types.map(t => ({
+        id: t.id,
+        name: t.name,
+        description: t.description || "",
+      }));
+    } catch (error) {
+      console.error('[getFacilityTypes] Error:', error);
+      // Fallback: return default types
+      return [
+        { id: 1, name: "Học tập", description: "" },
+        { id: 2, name: "Sự kiện", description: "" },
+        { id: 3, name: "Thực hành", description: "" },
+        { id: 4, name: "Họp", description: "" },
+        { id: 5, name: "Lab", description: "" },
+        { id: 6, name: "Khác", description: "" },
+      ];
+    }
+  },
   
   // Room Management
   getAllRooms: async (campusId = "all") => {
-    await delay(600);
-    // TODO: GET /api/rooms?campusId={campusId}
-    // const response = await fetch(`/api/rooms?campusId=${campusId}`);
-    // return await response.json();
-    
-    if (campusId === "all") return [...mockRooms];
-    return mockRooms.filter(room => room.campus === campusId);
+    try {
+      const campusIdNum = campusId === "all" ? null : getCampusId(campusId);
+      // Đảm bảo campusIdNum là number, không phải string
+      const endpoint = campusIdNum !== null && campusIdNum !== undefined 
+        ? `/facilities?campusId=${Number(campusIdNum)}` 
+        : '/facilities';
+      console.log('[getAllRooms] Calling endpoint:', endpoint, 'campusIdNum:', campusIdNum, 'type:', typeof campusIdNum);
+      const facilities = await apiRequest(endpoint);
+      console.log('[getAllRooms] Backend response (first facility):', facilities[0]);
+      
+      // Map backend format sang frontend format
+      return facilities.map(f => {
+        // Backend có thể trả về status (String) hoặc isActive (Boolean)
+        let status = "inactive";
+        if (f.status) {
+          // Nếu có status field (String), normalize về lowercase
+          const statusLower = f.status.toLowerCase();
+          if (statusLower === "active" || statusLower === "available") {
+            status = "active";
+          } else if (statusLower === "maintenance" || statusLower === "maintainance") {
+            status = "maintenance";
+          } else {
+            status = "inactive";
+          }
+        } else if (f.isActive !== undefined) {
+          // Nếu có isActive field (Boolean)
+          status = f.isActive ? "active" : "inactive";
+        }
+        
+        // Xử lý type: backend có thể trả về f.type (object) hoặc f.facilityType (object) hoặc f.type (string)
+        let typeName = "Khác";
+        if (f.type) {
+          if (typeof f.type === 'object' && f.type.name) {
+            typeName = f.type.name; // Backend include relation
+          } else if (typeof f.type === 'string') {
+            typeName = f.type; // Backend trả về string
+          }
+        } else if (f.facilityType) {
+          if (typeof f.facilityType === 'object' && f.facilityType.name) {
+            typeName = f.facilityType.name; // Backend include relation với tên khác
+          } else if (typeof f.facilityType === 'string') {
+            typeName = f.facilityType; // Backend trả về string
+          }
+        }
+        
+        return {
+          id: f.id,
+          name: f.name,
+          campus: campusId, // Giữ nguyên campus string cho frontend
+          type: typeName,
+          capacity: f.capacity || 0,
+          status: status,
+          description: f.description || "",
+        };
+      });
+    } catch (error) {
+      console.error('[getAllRooms] Error:', error);
+      throw error;
+    }
   },
 
   createRoom: async (data) => {
-    await delay(800);
-    // TODO: POST /api/rooms
-    // const response = await fetch('/api/rooms', { 
-    //   method: 'POST', 
-    //   body: JSON.stringify(data), 
-    //   headers: { 'Content-Type': 'application/json' } 
-    // });
-    // return await response.json();
-    
-    const newRoom = {
-      id: nextRoomId++,
-      ...data,
-    };
-    mockRooms.push(newRoom);
-    updateEquipmentRoomNames();
-    updateClubRoomNames();
-    return { success: true, id: newRoom.id };
+    try {
+      const campusIdNum = getCampusId(data.campus);
+      if (!campusIdNum) throw new Error("Invalid campus");
+      
+      // Tìm facilityTypeId từ type name
+      const facilityTypes = await apiRequest('/facility-types');
+      const facilityType = facilityTypes.find(ft => ft.name === data.type);
+      if (!facilityType) throw new Error(`Facility type "${data.type}" not found`);
+      
+      const response = await apiRequest('/facilities', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: data.name,
+          campusId: campusIdNum,
+          facilityTypeId: facilityType.id,
+          capacity: parseInt(data.capacity) || 0,
+          description: data.description || "",
+          isActive: data.status === "active",
+        }),
+      });
+      
+      return { success: true, id: response.id };
+    } catch (error) {
+      console.error('[createRoom] Error:', error);
+      throw error;
+    }
   },
 
   updateRoom: async (id, data) => {
-    await delay(800);
-    // TODO: PUT /api/rooms/{id}
-    // const response = await fetch(`/api/rooms/${id}`, { 
-    //   method: 'PUT', 
-    //   body: JSON.stringify(data), 
-    //   headers: { 'Content-Type': 'application/json' } 
-    // });
-    // return await response.json();
-    
-    const index = mockRooms.findIndex(r => r.id === id);
-    if (index === -1) throw new Error("Room not found");
-    
-    mockRooms[index] = { ...mockRooms[index], ...data };
-    updateEquipmentRoomNames();
-    updateClubRoomNames();
-    return { success: true };
+    try {
+      // Không gửi campusId khi update vì Facility Admin không nên đổi campus của phòng
+      // Backend sẽ xử lý facilityTypeId thành relation format
+      
+      // Tìm facilityTypeId từ type name
+      const facilityTypes = await apiRequest('/facility-types');
+      const facilityType = facilityTypes.find(ft => ft.name === data.type);
+      if (!facilityType) throw new Error(`Facility type "${data.type}" not found`);
+      
+      // Map status sang format backend mong đợi
+      let status = "ACTIVE";
+      if (data.status === "maintenance") {
+        status = "MAINTENANCE";
+      } else if (data.status === "inactive") {
+        status = "INACTIVE";
+      }
+      
+      const updatePayload = {
+        name: data.name,
+        // Không gửi campusId - giữ nguyên campus hiện tại
+        facilityTypeId: facilityType.id, // Backend sẽ convert thành relation
+        capacity: parseInt(data.capacity) || 0,
+        description: data.description || "",
+        status: status, // Gửi status thay vì isActive
+      };
+      
+      console.log('[updateRoom] Update payload:', updatePayload);
+      
+      await apiRequest(`/facilities/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(updatePayload),
+      });
+      
+      return { success: true };
+    } catch (error) {
+      console.error('[updateRoom] Error:', error);
+      throw error;
+    }
   },
 
   deleteRoom: async (id) => {
-    await delay(600);
-    // TODO: DELETE /api/rooms/{id}
-    // const response = await fetch(`/api/rooms/${id}`, { method: 'DELETE' });
-    // return await response.json();
-    
-    const index = mockRooms.findIndex(r => r.id === id);
-    if (index === -1) throw new Error("Room not found");
-    
-    mockRooms.splice(index, 1);
-    // Xóa equipment và club references
-    mockEquipment = mockEquipment.filter(eq => eq.roomId !== id);
-    mockClubs.forEach(club => {
-      club.priorityRoomIds = club.priorityRoomIds.filter(rid => rid !== id);
-    });
-    updateClubRoomNames();
-    return { success: true };
+    try {
+      await apiRequest(`/facilities/${id}`, { method: 'DELETE' });
+      return { success: true };
+    } catch (error) {
+      console.error('[deleteRoom] Error:', error);
+      throw error;
+    }
   },
 
   // Equipment Management
   getAllEquipment: async (campusId = null) => {
-    await delay(600);
-    // TODO: GET /api/equipment?campusId={campusId}
-    // const response = await fetch(`/api/equipment${campusId ? `?campusId=${campusId}` : ''}`);
-    // return await response.json();
-    
-    // Đảm bảo roomName được cập nhật
-    updateEquipmentRoomNames();
-    
-    // Nếu có campusId, filter equipment theo rooms thuộc campus đó
-    if (campusId && campusId !== "all") {
-      const campusRoomIds = mockRooms
-        .filter(room => room.campus === campusId)
-        .map(room => room.id);
-      return mockEquipment.filter(eq => !eq.roomId || campusRoomIds.includes(eq.roomId));
+    try {
+      const campusIdNum = campusId && campusId !== "all" ? getCampusId(campusId) : null;
+      const endpoint = campusIdNum ? `/equipment?campusId=${campusIdNum}` : '/equipment';
+      const equipment = await apiRequest(endpoint);
+      
+      // Map backend format sang frontend format
+      return equipment.map(eq => ({
+        id: eq.id,
+        name: eq.name,
+        roomId: eq.facilityId || null,
+        roomName: eq.facility?.name || null,
+        quantity: eq.quantity || 1,
+        status: eq.isActive ? "available" : "unavailable",
+        description: eq.description || "",
+      }));
+    } catch (error) {
+      console.error('[getAllEquipment] Error:', error);
+      throw error;
     }
-    
-    return [...mockEquipment];
   },
 
   createEquipment: async (data) => {
-    await delay(800);
-    // TODO: POST /api/equipment
-    // const response = await fetch('/api/equipment', { 
-    //   method: 'POST', 
-    //   body: JSON.stringify(data), 
-    //   headers: { 'Content-Type': 'application/json' } 
-    // });
-    // return await response.json();
-    
-    const room = data.roomId ? mockRooms.find(r => r.id === data.roomId) : null;
-    const newEquipment = {
-      id: nextEquipmentId++,
-      ...data,
-      roomName: room ? room.name : null,
-    };
-    mockEquipment.push(newEquipment);
-    return { success: true, id: newEquipment.id };
+    try {
+      const response = await apiRequest('/equipment', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: data.name,
+          facilityId: data.roomId || null,
+          quantity: parseInt(data.quantity) || 1,
+          description: data.description || "",
+          isActive: data.status === "available",
+        }),
+      });
+      
+      return { success: true, id: response.id };
+    } catch (error) {
+      console.error('[createEquipment] Error:', error);
+      throw error;
+    }
   },
 
   updateEquipment: async (id, data) => {
-    await delay(800);
-    // TODO: PUT /api/equipment/{id}
-    // const response = await fetch(`/api/equipment/${id}`, { 
-    //   method: 'PUT', 
-    //   body: JSON.stringify(data), 
-    //   headers: { 'Content-Type': 'application/json' } 
-    // });
-    // return await response.json();
-    
-    const index = mockEquipment.findIndex(eq => eq.id === id);
-    if (index === -1) throw new Error("Equipment not found");
-    
-    const room = data.roomId ? mockRooms.find(r => r.id === data.roomId) : null;
-    mockEquipment[index] = {
-      ...mockEquipment[index],
-      ...data,
-      roomName: room ? room.name : null,
-    };
-    return { success: true };
+    try {
+      await apiRequest(`/equipment/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: data.name,
+          facilityId: data.roomId || null,
+          quantity: parseInt(data.quantity) || 1,
+          description: data.description || "",
+          isActive: data.status === "available",
+        }),
+      });
+      
+      return { success: true };
+    } catch (error) {
+      console.error('[updateEquipment] Error:', error);
+      throw error;
+    }
   },
 
   deleteEquipment: async (id) => {
-    await delay(600);
-    // TODO: DELETE /api/equipment/{id}
-    // const response = await fetch(`/api/equipment/${id}`, { method: 'DELETE' });
-    // return await response.json();
-    
-    const index = mockEquipment.findIndex(eq => eq.id === id);
-    if (index === -1) throw new Error("Equipment not found");
-    
-    mockEquipment.splice(index, 1);
-    return { success: true };
+    try {
+      await apiRequest(`/equipment/${id}`, { method: 'DELETE' });
+      return { success: true };
+    } catch (error) {
+      console.error('[deleteEquipment] Error:', error);
+      throw error;
+    }
   },
 
   // Club Management
   getAllClubs: async (campusId = null) => {
-    await delay(600);
-    // TODO: GET /api/clubs?campusId={campusId}
-    // const response = await fetch(`/api/clubs${campusId ? `?campusId=${campusId}` : ''}`);
-    // return await response.json();
-    
-    // Đảm bảo priorityRoomNames được cập nhật
-    updateClubRoomNames();
-    
-    // Nếu có campusId, filter clubs có priority rooms thuộc campus đó
-    if (campusId && campusId !== "all") {
-      const campusRoomIds = mockRooms
-        .filter(room => room.campus === campusId)
-        .map(room => room.id);
-      return mockClubs.filter(club => 
-        club.priorityRoomIds && club.priorityRoomIds.some(roomId => campusRoomIds.includes(roomId))
-      );
+    try {
+      const campusIdNum = campusId && campusId !== "all" ? getCampusId(campusId) : null;
+      // Thêm timestamp để tránh cache
+      const timestamp = new Date().getTime();
+      const endpoint = campusIdNum 
+        ? `/clubs?campusId=${campusIdNum}&_t=${timestamp}` 
+        : `/clubs?_t=${timestamp}`;
+      const clubs = await apiRequest(endpoint);
+      console.log('[getAllClubs] Backend response:', clubs);
+      
+      // Map backend format sang frontend format
+      const mappedClubs = clubs.map(club => {
+        console.log('[getAllClubs] Club:', club.id, 'priorities:', club.priorities);
+        
+        // Map priorities - kiểm tra nhiều format
+        let priorityRoomIds = [];
+        let priorityRoomNames = [];
+        
+        if (club.priorities && Array.isArray(club.priorities)) {
+          priorityRoomIds = club.priorities
+            .map(p => p.facilityId || p.facility?.id)
+            .filter(id => id !== undefined && id !== null);
+          
+          priorityRoomNames = club.priorities
+            .map(p => p.facility?.name || p.facilityName)
+            .filter(name => name && name !== null && name !== undefined);
+        }
+        
+        return {
+          id: club.id,
+          name: club.name,
+          description: club.description || "",
+          leaderCount: club.leaderId ? 1 : 0,
+          leader: club.leader ? {
+            id: club.leader.id,
+            name: club.leader.fullName || club.leader.name,
+            email: club.leader.email,
+          } : null,
+          priorityRoomIds: priorityRoomIds,
+          priorityRoomNames: priorityRoomNames,
+        };
+      });
+      console.log('[getAllClubs] Mapped clubs:', mappedClubs);
+      return mappedClubs;
+    } catch (error) {
+      console.error('[getAllClubs] Error:', error);
+      throw error;
     }
-    
-    return [...mockClubs];
   },
 
   createClub: async (data) => {
-    await delay(800);
-    // TODO: POST /api/clubs
-    // Body: { name, description, priorityRoomIds: [] }
-    // const response = await fetch('/api/clubs', { 
-    //   method: 'POST', 
-    //   body: JSON.stringify(data), 
-    //   headers: { 'Content-Type': 'application/json' } 
-    // });
-    // return await response.json();
-    
-    const priorityRoomNames = (data.priorityRoomIds || [])
-      .map(roomId => {
-        const room = mockRooms.find(r => r.id === roomId);
-        return room ? room.name : null;
-      })
-      .filter(name => name !== null);
-    
-    const newClub = {
-      id: nextClubId++,
-      name: data.name,
-      description: data.description || "",
-      leaderCount: 0, // Mặc định chưa có leader
-      priorityRoomIds: data.priorityRoomIds || [],
-      priorityRoomNames: priorityRoomNames,
-    };
-    mockClubs.push(newClub);
-    return { success: true, id: newClub.id };
+    try {
+      // Lấy campusId từ user hiện tại
+      const currentUser = JSON.parse(localStorage.getItem('fptu_user') || '{}');
+      const campusId = getCampusId(currentUser.campus || data.campus);
+      if (!campusId) throw new Error("Invalid campus");
+      
+      const response = await apiRequest('/clubs', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: data.name,
+          description: data.description || "",
+          campusId: campusId,
+        }),
+      });
+      
+      // Nếu có priorityRoomIds, gán từng priority
+      if (data.priorityRoomIds && data.priorityRoomIds.length > 0) {
+        for (const facilityId of data.priorityRoomIds) {
+          // Đảm bảo facilityId là number
+          const facilityIdNum = Number(facilityId);
+          if (!facilityIdNum || isNaN(facilityIdNum)) {
+            console.error('[createClub] Invalid facilityId:', facilityId);
+            continue;
+          }
+          await apiRequest(`/clubs/${response.id}/priorities`, {
+            method: 'POST',
+            body: JSON.stringify({
+              facilityId: facilityIdNum,
+              priorityScore: 1, // Default priority score
+            }),
+          });
+        }
+      }
+      
+      return { success: true, id: response.id };
+    } catch (error) {
+      console.error('[createClub] Error:', error);
+      throw error;
+    }
   },
 
   updateClub: async (id, data) => {
-    await delay(800);
-    // TODO: PUT /api/clubs/{id}
-    // Body: { name, description, priorityRoomIds: [] }
-    // const response = await fetch(`/api/clubs/${id}`, { 
-    //   method: 'PUT', 
-    //   body: JSON.stringify(data), 
-    //   headers: { 'Content-Type': 'application/json' } 
-    // });
-    // return await response.json();
-    
-    const index = mockClubs.findIndex(c => c.id === id);
-    if (index === -1) throw new Error("Club not found");
-    
-    const priorityRoomNames = (data.priorityRoomIds || [])
-      .map(roomId => {
-        const room = mockRooms.find(r => r.id === roomId);
-        return room ? room.name : null;
-      })
-      .filter(name => name !== null);
-    
-    mockClubs[index] = {
-      ...mockClubs[index],
-      name: data.name,
-      description: data.description || "",
-      priorityRoomIds: data.priorityRoomIds || [],
-      priorityRoomNames: priorityRoomNames,
-    };
-    return { success: true };
+    try {
+      // Đảm bảo id là number
+      const clubId = Number(id);
+      if (!clubId || isNaN(clubId)) {
+        throw new Error(`Invalid club ID: ${id}`);
+      }
+      
+      // Update club info
+      await apiRequest(`/clubs/${clubId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: data.name,
+          description: data.description || "",
+        }),
+      });
+      
+      // Update priorities: Xóa tất cả priorities cũ, thêm priorities mới
+      if (data.priorityRoomIds !== undefined) {
+        try {
+          console.log('[updateClub] Updating priorities for club:', clubId, 'priorityRoomIds:', data.priorityRoomIds);
+          
+          // Lấy danh sách priorities hiện tại
+          const currentPriorities = await apiRequest(`/clubs/${clubId}/priorities`);
+          console.log('[updateClub] Current priorities:', currentPriorities);
+          
+          // Xóa tất cả priorities cũ
+          if (Array.isArray(currentPriorities) && currentPriorities.length > 0) {
+            for (const priority of currentPriorities) {
+              if (priority && priority.facilityId) {
+                console.log('[updateClub] Deleting priority:', priority.facilityId);
+                await apiRequest(`/clubs/${clubId}/priorities/${priority.facilityId}`, {
+                  method: 'DELETE',
+                });
+              }
+            }
+          }
+          
+          // Thêm priorities mới
+          if (Array.isArray(data.priorityRoomIds) && data.priorityRoomIds.length > 0) {
+            for (const facilityId of data.priorityRoomIds) {
+              // Đảm bảo facilityId là number
+              const facilityIdNum = Number(facilityId);
+              if (!facilityIdNum || isNaN(facilityIdNum)) {
+                console.error('[updateClub] Invalid facilityId:', facilityId);
+                continue;
+              }
+              console.log('[updateClub] Adding priority:', { clubId: clubId, facilityId: facilityIdNum });
+              const result = await apiRequest(`/clubs/${clubId}/priorities`, {
+                method: 'POST',
+                body: JSON.stringify({
+                  facilityId: facilityIdNum,
+                  priorityScore: 1,
+                }),
+              });
+              console.log('[updateClub] Priority added successfully:', result);
+            }
+          } else {
+            console.log('[updateClub] No priorities to add (empty array)');
+          }
+        } catch (priorityError) {
+          console.error('[updateClub] Error updating priorities:', priorityError);
+          // Throw error để user biết có lỗi
+          throw new Error(`Lỗi khi cập nhật phòng ưu tiên: ${priorityError.message}`);
+        }
+      }
+      
+      return { success: true };
+    } catch (error) {
+      console.error('[updateClub] Error:', error);
+      throw error;
+    }
   },
 
   deleteClub: async (id) => {
-    await delay(600);
-    // TODO: DELETE /api/clubs/{id}
-    // const response = await fetch(`/api/clubs/${id}`, { method: 'DELETE' });
-    // return await response.json();
-    
-    const index = mockClubs.findIndex(c => c.id === id);
-    if (index === -1) throw new Error("Club not found");
-    
-    mockClubs.splice(index, 1);
-    return { success: true };
+    try {
+      await apiRequest(`/clubs/${id}`, { method: 'DELETE' });
+      return { success: true };
+    } catch (error) {
+      console.error('[deleteClub] Error:', error);
+      throw error;
+    }
   },
 
   // ========== STATISTICS & HISTORY APIs ==========

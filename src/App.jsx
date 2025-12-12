@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Outlet, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Outlet, Navigate, useLocation } from "react-router-dom";
 import { useState } from "react";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { cn } from "./lib/utils"; // Import hàm cn để xử lý class động
@@ -23,8 +23,28 @@ const MainLayout = () => {
   // Mặc định Sidebar mở trên PC (true)
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const { user } = useAuth();
+  const location = useLocation();
 
   if (!user) return <Navigate to="/login" />;
+
+  // Redirect nếu user đang ở sai route theo role
+  const isFacilityAdmin = user?.role === 'facility_admin' || user?.role === 'FACILITY_ADMIN';
+  const isStudent = user?.role === 'student' || user?.role === 'STUDENT';
+  
+  // Nếu Facility Admin đang ở route Student -> redirect
+  if (isFacilityAdmin && (location.pathname === '/dashboard' || location.pathname === '/booking' || location.pathname === '/history')) {
+    return <Navigate to="/admin-facility" replace />;
+  }
+  
+  // Nếu Student đang ở route Admin -> redirect
+  if (isStudent && location.pathname.startsWith('/admin-facility')) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  // Kiểm tra nếu đang ở trang Admin thì ẩn Footer
+  const isAdminPage = location.pathname.startsWith('/admin') || 
+                      isFacilityAdmin || 
+                      user?.role === 'campus_admin';
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-gray-900">
@@ -52,8 +72,8 @@ const MainLayout = () => {
             <Outlet />
           </main>
 
-          {/* Footer nằm dưới cùng */}
-          <Footer />
+          {/* Footer nằm dưới cùng - Ẩn ở trang Admin */}
+          {!isAdminPage && <Footer />}
         </div>
       </div>
     </div>

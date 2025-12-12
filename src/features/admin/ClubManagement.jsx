@@ -43,6 +43,14 @@ export default function ClubManagement() {
       ]);
       setClubs(clubsData);
       setRooms(roomsData);
+      
+      // Nếu đang xem chi tiết một club, cập nhật lại viewingClub
+      if (viewingClub) {
+        const updatedClub = clubsData.find(c => c.id === viewingClub.id);
+        if (updatedClub) {
+          setViewingClub(updatedClub);
+        }
+      }
     } catch (error) {
       console.error("Lỗi tải dữ liệu:", error);
     } finally {
@@ -82,6 +90,11 @@ export default function ClubManagement() {
     }
   };
 
+  const handleViewDetail = (club) => {
+    setViewingClub(club);
+    setShowDetailModal(true);
+  };
+
   const handleManageLeaders = (club) => {
     setSelectedClub(club);
     setShowLeaderModal(true);
@@ -90,6 +103,7 @@ export default function ClubManagement() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      console.log('[handleSubmit] formData:', formData);
       if (editingClub) {
         await api.updateClub(editingClub.id, formData);
         alert("Cập nhật CLB thành công!");
@@ -99,19 +113,34 @@ export default function ClubManagement() {
       }
       
       setShowModal(false);
-      await loadData();
+      // Reset form data
+      setFormData({
+        name: "",
+        description: "",
+        priorityRoomIds: [],
+      });
+      setEditingClub(null);
+      // Reload data với delay nhỏ để đảm bảo backend đã xử lý xong
+      setTimeout(async () => {
+        await loadData();
+      }, 500);
     } catch (error) {
-      alert(editingClub ? "Lỗi khi cập nhật CLB!" : "Lỗi khi tạo CLB!");
+      console.error('[handleSubmit] Error:', error);
+      alert(editingClub ? `Lỗi khi cập nhật CLB: ${error.message}` : `Lỗi khi tạo CLB: ${error.message}`);
     }
   };
 
   const togglePriorityRoom = (roomId) => {
-    setFormData((prev) => ({
-      ...prev,
-      priorityRoomIds: prev.priorityRoomIds.includes(roomId)
+    setFormData((prev) => {
+      const newPriorityRoomIds = prev.priorityRoomIds.includes(roomId)
         ? prev.priorityRoomIds.filter((id) => id !== roomId)
-        : [...prev.priorityRoomIds, roomId],
-    }));
+        : [...prev.priorityRoomIds, roomId];
+      console.log('[togglePriorityRoom] roomId:', roomId, 'newPriorityRoomIds:', newPriorityRoomIds);
+      return {
+        ...prev,
+        priorityRoomIds: newPriorityRoomIds,
+      };
+    });
   };
 
   const filteredClubs = clubs.filter((club) =>
@@ -242,7 +271,7 @@ export default function ClubManagement() {
       {/* Modal Create/Edit Club */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+          <Card className="max-w-2xl w-full max-h-[90vh] flex flex-col">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold text-gray-900">
                 {editingClub ? "Chỉnh sửa CLB" : "Thêm CLB mới"}
@@ -255,7 +284,8 @@ export default function ClubManagement() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+              <div className="space-y-4 overflow-y-auto flex-1 pr-2">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Tên CLB *
@@ -293,16 +323,26 @@ export default function ClubManagement() {
                       <label
                         key={room.id}
                         className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
+                        onClick={(e) => {
+                          // Prevent double toggle khi click vào label
+                          if (e.target.type !== 'checkbox') {
+                            e.preventDefault();
+                            togglePriorityRoom(room.id);
+                          }
+                        }}
                       >
                         <input
                           type="checkbox"
                           checked={formData.priorityRoomIds.includes(room.id)}
-                          onChange={() => togglePriorityRoom(room.id)}
-                          className="w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            togglePriorityRoom(room.id);
+                          }}
+                          className="w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500 cursor-pointer"
                         />
                         <Building2 className="w-4 h-4 text-gray-400" />
-                        <span className="text-sm text-gray-700">{room.name}</span>
-                        <span className="text-xs text-gray-400 ml-auto">({room.type})</span>
+                        <span className="text-sm text-gray-700 flex-1">{room.name}</span>
+                        <span className="text-xs text-gray-400">({room.type})</span>
                       </label>
                     ))
                   ) : (
@@ -317,8 +357,9 @@ export default function ClubManagement() {
                   </p>
                 )}
               </div>
+              </div>
 
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="sticky bottom-0 bg-white border-t pt-4 mt-4 flex justify-end gap-3">
                 <Button
                   type="button"
                   variant="secondary"
@@ -438,8 +479,15 @@ export default function ClubManagement() {
                     </p>
                   </div>
                   <div>
-                    <label className="text-sm font-medium text-gray-500">Số Leader</label>
-                    <p className="text-gray-900 font-medium mt-1">{viewingClub.leaderCount || 0} người</p>
+                    <label className="text-sm font-medium text-gray-500">Leader</label>
+                    {viewingClub.leader ? (
+                      <div className="mt-1">
+                        <p className="text-gray-900 font-medium">{viewingClub.leader.name}</p>
+                        <p className="text-sm text-gray-500">{viewingClub.leader.email}</p>
+                      </div>
+                    ) : (
+                      <p className="text-gray-400 italic mt-1">Chưa có leader</p>
+                    )}
                   </div>
                   <div>
                     <label className="text-sm font-medium text-gray-500 mb-2 block">Phòng ưu tiên</label>

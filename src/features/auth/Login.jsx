@@ -31,8 +31,9 @@ export default function Login() {
       // Gọi Login logic (Campus sẽ được xử lý lại bên trong api)
       const userData = await login(email, password, campus);
       
-      // ĐIỀU HƯỚNG THEO ROLE
-      if (userData.role === 'facility_admin') {
+      // ĐIỀU HƯỚNG THEO ROLE (hỗ trợ cả lowercase và uppercase)
+      const role = userData.role?.toLowerCase();
+      if (role === 'facility_admin' || role === 'facilityadmin') {
         navigate("/admin-facility");
       } else {
         navigate("/dashboard"); // Student

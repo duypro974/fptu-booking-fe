@@ -38,7 +38,10 @@ export default function EquipmentManagement() {
     try {
       // Facility Admin chỉ xem equipment và rooms của campus mình
       const [equipmentData, roomsData] = await Promise.all([
-        api.getAllEquipment(user.campus),
+        api.getAllEquipment(user.campus).catch(err => {
+          console.warn("Lỗi tải thiết bị (API chưa có):", err);
+          return []; // Trả về mảng rỗng nếu API chưa có
+        }),
         api.getAllRooms(user.campus),
       ]);
       setEquipment(equipmentData);
@@ -241,7 +244,7 @@ export default function EquipmentManagement() {
       {/* Modal Create/Edit */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+          <Card className="max-w-2xl w-full max-h-[90vh] flex flex-col">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold text-gray-900">
                 {editingEquipment ? "Chỉnh sửa thiết bị" : "Thêm thiết bị mới"}
@@ -254,7 +257,8 @@ export default function EquipmentManagement() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+              <div className="space-y-4 overflow-y-auto flex-1 pr-2">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Tên thiết bị *
@@ -332,8 +336,9 @@ export default function EquipmentManagement() {
                   placeholder="Mô tả về thiết bị..."
                 />
               </div>
+              </div>
 
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="sticky bottom-0 bg-white border-t pt-4 mt-4 flex justify-end gap-3">
                 <Button
                   type="button"
                   variant="secondary"

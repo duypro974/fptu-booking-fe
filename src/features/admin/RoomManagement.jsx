@@ -9,6 +9,7 @@ import Badge from "../../components/ui/Badge";
 export default function RoomManagement() {
   const { user } = useAuth();
   const [rooms, setRooms] = useState([]);
+  const [facilityTypes, setFacilityTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [showModal, setShowModal] = useState(false);
@@ -21,7 +22,7 @@ export default function RoomManagement() {
   const [formData, setFormData] = useState({
     name: "",
     campus: user?.campus || "hcm",
-    type: "Học tập",
+    type: "",
     capacity: "",
     status: "active",
     description: "",
@@ -29,10 +30,37 @@ export default function RoomManagement() {
 
   useEffect(() => {
     if (user?.campus) {
+      loadFacilityTypes();
       loadRooms();
       setFormData(prev => ({ ...prev, campus: user.campus }));
     }
   }, [user]);
+
+  const loadFacilityTypes = async () => {
+    try {
+      const types = await api.getFacilityTypes();
+      setFacilityTypes(types);
+      // Set default type nếu chưa có
+      if (types.length > 0 && !formData.type) {
+        setFormData(prev => ({ ...prev, type: types[0].name }));
+      }
+    } catch (error) {
+      console.error("Lỗi tải loại phòng:", error);
+      // Fallback to default types
+      const defaultTypes = [
+        { id: 1, name: "Học tập" },
+        { id: 2, name: "Sự kiện" },
+        { id: 3, name: "Thực hành" },
+        { id: 4, name: "Họp" },
+        { id: 5, name: "Lab" },
+        { id: 6, name: "Khác" },
+      ];
+      setFacilityTypes(defaultTypes);
+      if (!formData.type) {
+        setFormData(prev => ({ ...prev, type: defaultTypes[0].name }));
+      }
+    }
+  };
 
   const loadRooms = async () => {
     if (!user?.campus) return;
@@ -50,10 +78,11 @@ export default function RoomManagement() {
 
   const handleCreate = () => {
     setEditingRoom(null);
+    const defaultType = facilityTypes.length > 0 ? facilityTypes[0].name : "Học tập";
     setFormData({
       name: "",
       campus: user?.campus || "hcm", // Tự động dùng campus của admin
-      type: "Học tập",
+      type: defaultType,
       capacity: "",
       status: "active",
       description: "",
@@ -131,8 +160,34 @@ export default function RoomManagement() {
     room.type.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const roomTypes = ["Học tập", "Sự kiện", "Thực hành", "Họp", "Lab", "Khác"];
   const campuses = api.getCampuses();
+  
+  // Helper để lấy tên campus từ ID (hỗ trợ cả string và number)
+  const getCampusName = (campusId) => {
+    // Nếu là số, map sang string
+    const campusMap = { 1: "hn", 2: "hcm", 3: "dn", 4: "ct", 5: "qn" };
+    const campusString = typeof campusId === 'number' ? campusMap[campusId] : campusId;
+    
+    // Tìm tên campus từ campuses array
+    const campus = campuses.find(c => c.id === campusString);
+    if (campus) return campus.name;
+    
+    // Fallback: map trực tiếp
+    if (campusString === "hcm") return "FPTU TP.HCM (Quận 9)";
+    if (campusString === "hn") return "FPTU Hòa Lạc (Hà Nội)";
+    if (campusString === "dn") return "FPTU Đà Nẵng";
+    if (campusString === "ct") return "FPTU Cần Thơ";
+    if (campusString === "qn") return "FPTU Quy Nhơn";
+    
+    // Nếu là số, trả về tên tương ứng
+    if (campusId === 1) return "FPTU Hòa Lạc (Hà Nội)";
+    if (campusId === 2) return "FPTU TP.HCM (Quận 9)";
+    if (campusId === 3) return "FPTU Đà Nẵng";
+    if (campusId === 4) return "FPTU Cần Thơ";
+    if (campusId === 5) return "FPTU Quy Nhơn";
+    
+    return campusId; // Fallback cuối cùng
+  };
 
   return (
     <div className="space-y-6">
@@ -244,7 +299,7 @@ export default function RoomManagement() {
       {/* Modal Create/Edit */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+          <Card className="max-w-2xl w-full max-h-[90vh] flex flex-col">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold text-gray-900">
                 {editingRoom ? "Chỉnh sửa phòng" : "Thêm phòng mới"}
@@ -257,7 +312,8 @@ export default function RoomManagement() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+              <div className="space-y-4 overflow-y-auto flex-1 pr-2">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Tên phòng *
@@ -279,7 +335,7 @@ export default function RoomManagement() {
                   </label>
                   <input
                     type="text"
-                    value={campuses.find(c => c.id === formData.campus)?.name || formData.campus}
+                    value={user?.campusName || getCampusName(formData.campus)}
                     disabled
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-600 cursor-not-allowed"
                   />
@@ -295,12 +351,17 @@ export default function RoomManagement() {
                     value={formData.type}
                     onChange={(e) => setFormData({ ...formData, type: e.target.value })}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    disabled={facilityTypes.length === 0}
                   >
-                    {roomTypes.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
-                    ))}
+                    {facilityTypes.length === 0 ? (
+                      <option value="">Đang tải...</option>
+                    ) : (
+                      facilityTypes.map((type) => (
+                        <option key={type.id} value={type.name}>
+                          {type.name}
+                        </option>
+                      ))
+                    )}
                   </select>
                 </div>
               </div>
@@ -350,8 +411,9 @@ export default function RoomManagement() {
                   placeholder="Mô tả về phòng..."
                 />
               </div>
+              </div>
 
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="sticky bottom-0 bg-white border-t pt-4 mt-4 flex justify-end gap-3">
                 <Button
                   type="button"
                   variant="secondary"
