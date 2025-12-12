@@ -6,6 +6,8 @@ export default function Badge({ children, type = "default" }) {
     success: "bg-green-100 text-green-700",
     warning: "bg-yellow-100 text-yellow-800",
     danger: "bg-red-100 text-red-700",
+    info: "bg-blue-100 text-blue-700",
+    secondary: "bg-gray-200 text-gray-700",
   };
 
   return (

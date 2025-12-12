@@ -1,4 +1,4 @@
-import { Calendar, LayoutDashboard, History, Shield, Globe, CheckSquare, Users, Building2, AlertTriangle, FileText, Settings } from "lucide-react";
+import { Calendar, LayoutDashboard, History, Shield, Globe, CheckSquare, Users } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../context/AuthContext";
@@ -14,52 +14,22 @@ export default function Sidebar({ isOpen }) {
     { icon: History, label: "Lịch sử", path: "/history" },
   ];
 
-  // LECTURER MENU (Có thêm các tính năng đặc biệt)
-  const LECTURER_MENU = [
-    { icon: LayoutDashboard, label: "Trang chủ", path: "/dashboard" },
-    { icon: Calendar, label: "Đặt phòng", path: "/booking" },
-    { icon: History, label: "Lịch sử", path: "/history" },
-    { icon: FileText, label: "Đặt lịch định kỳ", path: "/booking/recurring" },
-  ];
-
-  // SECURITY GUARD MENU
-  const SECURITY_GUARD_MENU = [
-    { icon: LayoutDashboard, label: "Lịch hôm nay", path: "/security/schedule" },
-    { icon: CheckSquare, label: "Check-in", path: "/security/checkin" },
-    { icon: AlertTriangle, label: "Báo cáo sự cố", path: "/security/report" },
+  const STAFF_MENU = [
+    { icon: LayoutDashboard, label: "Tổng quan Cơ sở", path: "/admin-campus" },
+    { icon: CheckSquare, label: "Duyệt yêu cầu", path: "/admin-campus/approvals" },
+    { icon: Shield, label: "Quản lý Phòng", path: "/admin-campus/rooms" },
   ];
 
   // FACILITY ADMIN MENU (Nhân viên quản lý phòng)
   const FACILITY_ADMIN_MENU = [
-    { icon: LayoutDashboard, label: "Tổng quan", path: "/admin-facility" },
-    { icon: CheckSquare, label: "Duyệt yêu cầu", path: "/admin-facility/approvals" },
-    { icon: Building2, label: "Quản lý Phòng", path: "/admin-facility/rooms" },
-    { icon: Users, label: "Quản lý CLB", path: "/admin-facility/clubs" },
-    { icon: Settings, label: "Bảo trì & Chuyển phòng", path: "/admin-facility/maintenance" },
-  ];
-
-  // CAMPUS ADMIN MENU (Quản lý cơ sở - Sếp)
-  const CAMPUS_ADMIN_MENU = [
-    { icon: LayoutDashboard, label: "Tổng quan Cơ sở", path: "/admin-campus" },
-    { icon: Users, label: "Quản lý Nhân viên", path: "/admin-campus/staff" },
-    { icon: FileText, label: "Báo cáo & Thống kê", path: "/admin-campus/reports" },
+    { icon: Globe, label: "Toàn hệ thống", path: "/admin-facility" },
+    { icon: Users, label: "Quản lý Tài khoản", path: "/admin-facility/users" },
   ];
 
   // Xác định menu dựa trên role
   let menuItems = STUDENT_MENU;
-  
-  if (user?.role === 'lecturer') {
-    menuItems = LECTURER_MENU;
-  } else if (user?.role === 'security_guard') {
-    menuItems = SECURITY_GUARD_MENU;
-  } else if (user?.role === 'facility_admin') {
-    menuItems = FACILITY_ADMIN_MENU;
-  } else if (user?.role === 'campus_admin') {
-    menuItems = CAMPUS_ADMIN_MENU;
-  } else if (user?.isClubLeader) {
-    // Club Leader vẫn dùng menu Student nhưng sẽ có thêm tính năng trong booking form
-    menuItems = STUDENT_MENU;
-  }
+  if (user?.role === 'campus_admin') menuItems = STAFF_MENU;
+  if (user?.role === 'facility_admin') menuItems = FACILITY_ADMIN_MENU;
 
   return (
     <aside className={cn(
