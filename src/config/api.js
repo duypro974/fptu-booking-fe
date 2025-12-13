@@ -6,16 +6,8 @@ export { API_BASE_URL as API_BASE_URL_EXPORT };
 
 // Helper function để lấy token từ localStorage
 export const getAuthToken = () => {
-  const user = localStorage.getItem('fptu_user');
-  if (user) {
-    try {
-      const userData = JSON.parse(user);
-      return userData.token;
-    } catch (e) {
-      return null;
-    }
-  }
-  return null;
+  // Token được lưu riêng trong 'access_token' (theo authService.js)
+  return localStorage.getItem('access_token');
 };
 
 // Helper function để gọi API với authentication
@@ -57,9 +49,10 @@ export const apiRequest = async (endpoint, options = {}) => {
     // Xử lý lỗi
     if (!response.ok) {
       if (response.status === 401) {
-        // Token hết hạn hoặc không hợp lệ
+        // Token hết hạn hoặc không hợp lệ - clear localStorage
         localStorage.removeItem('fptu_user');
-        window.location.href = '/login';
+        localStorage.removeItem('access_token');
+        // Không cần reload, AuthContext sẽ tự detect và redirect
         throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
       }
       

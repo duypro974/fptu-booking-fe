@@ -72,7 +72,7 @@ export default function Login() {
 
       if (role === "FACILITY_ADMIN") {
         navigate("/admin-facility");
-      } else if (userData.role === 'campus_admin') {
+      } else if (role === "CAMPUS_ADMIN") {
         navigate("/admin-campus");
       } else {
         navigate("/dashboard");

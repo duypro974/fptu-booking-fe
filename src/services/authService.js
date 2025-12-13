@@ -1,9 +1,22 @@
 // src/services/authService.js
-import api from "./api";
+import axios from "axios";
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:6969/api";
+
+const axiosClient = axios.create({
+  baseURL: API_BASE_URL,
+  headers: { "Content-Type": "application/json" },
+});
+
+axiosClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem("access_token");
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
 
 // POST /auth/login
 export const login = async ({ email, password, campusId }) => {
-  const res = await api.post("/auth/login", { email, password, campusId });
+  const res = await axiosClient.post("/auth/login", { email, password, campusId });
 
   // Nếu backend trả token: lưu lại để dùng Bearer (tuỳ bạn)
   if (res.data?.token) localStorage.setItem("access_token", res.data.token);
@@ -16,7 +29,7 @@ export const login = async ({ email, password, campusId }) => {
 
 // GET /auth/profile
 export const getProfile = async () => {
-  const res = await api.get("/auth/profile");
+  const res = await axiosClient.get("/auth/profile");
   return res.data;
 };
 

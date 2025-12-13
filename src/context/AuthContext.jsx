@@ -11,10 +11,27 @@ export function AuthProvider({ children }) {
 
   // Load user từ localStorage trước
   useEffect(() => {
-    const storedUser = localStorage.getItem("fptu_user");
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (storedUser) setUser(JSON.parse(storedUser));
-    setLoading(false);
+    try {
+      const storedUser = localStorage.getItem("fptu_user");
+      const storedToken = localStorage.getItem("access_token");
+      
+      // Nếu có user và token thì set user, nếu không thì clear hết
+      if (storedUser && storedToken) {
+        setUser(JSON.parse(storedUser));
+      } else {
+        // Clear nếu thiếu token hoặc user
+        localStorage.removeItem("fptu_user");
+        localStorage.removeItem("access_token");
+        setUser(null);
+      }
+    } catch (error) {
+      console.error("Error loading user from localStorage:", error);
+      localStorage.removeItem("fptu_user");
+      localStorage.removeItem("access_token");
+      setUser(null);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   // Login theo swagger: POST /auth/login

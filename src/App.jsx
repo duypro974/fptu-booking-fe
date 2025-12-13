@@ -22,8 +22,17 @@ import HistoryLog from "./features/admin/HistoryLog";
 const MainLayout = () => {
   // Mặc định Sidebar mở trên PC (true)
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   const location = useLocation();
+
+  // Đợi auth load xong trước khi check user
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-gray-500">Đang tải...</div>
+      </div>
+    );
+  }
 
   if (!user) return <Navigate to="/login" />;
 
@@ -97,12 +106,15 @@ function App() {
             <Route path="booking" element={<RoomSearch />} />
             <Route path="history" element={<MyBookings />} />
             
-            {/* STAFF */}
-            <Route path="admin-campus" element={<AdminDashboard />} />
+            {/* CAMPUS ADMIN */}
+            <Route path="admin-campus" element={<DashboardPage />} />
             <Route path="admin-campus/approvals" element={<ApprovalList />} />
 
-            {/* BOSS */}
-            <Route path="admin-facility" element={<FacilityDashboard />} />
+            {/* FACILITY ADMIN */}
+            <Route path="admin-facility" element={<FacilityAdminDashboard />} />
+            <Route path="admin-facility/rooms" element={<ResourceManagement />} />
+            <Route path="admin-facility/statistics" element={<Statistics />} />
+            <Route path="admin-facility/history" element={<HistoryLog />} />
           </Route>
           
           <Route path="*" element={<div className="text-center pt-20">404 - Not Found</div>} />

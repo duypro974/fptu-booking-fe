@@ -5,6 +5,8 @@ import { api } from "../../services/api";
 import Card from "../../components/ui/Card";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
+import BookingForm from "./BookingForm";
+import SuccessDialog from "../../components/ui/SuccessDialog";
 import { 
   MapPin, Users, Search, Wifi, Projector, Wind, X, CalendarCheck, Info, 
   Filter, Calendar, Clock, Building2, SlidersHorizontal, ChevronLeft, ChevronRight 
@@ -263,8 +265,19 @@ export default function RoomSearch() {
               onClick={() => setSelectedRoom(room)}
             >
               {/* Ảnh phòng */}
-              <div className="h-56 overflow-hidden relative">
-                <img src={room.image} alt={room.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
+              <div className="h-56 overflow-hidden relative bg-gradient-to-br from-orange-200 to-red-200">
+                <img 
+                  src={room.image || "https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=600"} 
+                  alt={room.name} 
+                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
+                  onError={(e) => {
+                    // Fallback nếu ảnh lỗi
+                    const fallbackUrl = "https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=600";
+                    if (e.target.src !== fallbackUrl) {
+                      e.target.src = fallbackUrl;
+                    }
+                  }}
+                />
                 
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
                   <span className="bg-white/20 backdrop-blur-md text-white border border-white/50 px-4 py-2 rounded-full font-medium transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
@@ -332,17 +345,68 @@ function RoomDetailModal({ room, onClose, selectedDate }) {
   const { user } = useAuth();
   const [schedule, setSchedule] = useState(null);
   const [loadingSchedule, setLoadingSchedule] = useState(true);
+  const [facilityDetail, setFacilityDetail] = useState(null);
+  const [loadingDetail, setLoadingDetail] = useState(true);
   const [selectedSlots, setSelectedSlots] = useState([]);
   const [showBookingForm, setShowBookingForm] = useState(false);
+  const [successDialog, setSuccessDialog] = useState(null);
+
+  // Load facility detail từ API
+  useEffect(() => {
+    if (room) {
+      setLoadingDetail(true);
+      api.getFacilityDetail(room.id)
+        .then(detail => {
+          console.log('[RoomDetailModal] Facility detail loaded:', detail);
+          console.log('[RoomDetailModal] Images:', detail.images);
+          setFacilityDetail(detail);
+          setLoadingDetail(false);
+        })
+        .catch(error => {
+          console.error('Error loading facility detail:', error);
+          setLoadingDetail(false);
+        });
+    }
+  }, [room]);
 
   useEffect(() => {
     if (room) {
       setLoadingSchedule(true);
-      api.getRoomSchedule(room.id, selectedDate || new Date().toISOString().split('T')[0], "day")
-        .then(data => {
-          setSchedule(data);
-          setLoadingSchedule(false);
+      // TODO: Gọi API getRoomSchedule khi có endpoint từ backend
+      // Tạm thời tạo mock slots để user có thể chọn
+      try {
+        // api.getRoomSchedule(room.id, selectedDate || new Date().toISOString().split('T')[0], "day")
+        //   .then(data => {
+        //     setSchedule(data);
+        //     setLoadingSchedule(false);
+        //   });
+        
+        // Mock slots tạm thời để user có thể chọn
+        const mockSlots = [
+          { id: 1, start: "07:00", end: "08:30", label: "Slot 1" },
+          { id: 2, start: "08:30", end: "10:00", label: "Slot 2" },
+          { id: 3, start: "10:00", end: "11:30", label: "Slot 3" },
+          { id: 4, start: "11:30", end: "13:00", label: "Slot 4" },
+          { id: 5, start: "13:00", end: "14:30", label: "Slot 5" },
+          { id: 6, start: "14:30", end: "16:00", label: "Slot 6" },
+          { id: 7, start: "16:00", end: "17:30", label: "Slot 7" },
+          { id: 8, start: "17:30", end: "19:00", label: "Slot 8" },
+          { id: 9, start: "19:00", end: "20:30", label: "Slot 9" },
+          { id: 10, start: "20:30", end: "22:00", label: "Slot 10" },
+        ];
+        
+        setSchedule({
+          facilityId: room.id,
+          date: selectedDate || new Date().toISOString().split('T')[0],
+          slots: mockSlots,
+          bookings: [] // Chưa có booking data từ API
         });
+        setLoadingSchedule(false);
+      } catch (error) {
+        console.error('Error loading schedule:', error);
+        setSchedule(null);
+        setLoadingSchedule(false);
+      }
     }
   }, [room, selectedDate]);
 
@@ -386,12 +450,16 @@ function RoomDetailModal({ room, onClose, selectedDate }) {
     );
   };
 
-  const amenities = [
-    { icon: Wifi, label: "Wifi tốc độ cao" },
-    { icon: Projector, label: "Máy chiếu HDMI" },
-    { icon: Wind, label: "Điều hòa" },
-    { icon: Info, label: "Bảng trắng" },
-  ];
+  // Sử dụng equipment từ API, fallback về amenities mặc định nếu chưa có
+  const equipment = facilityDetail?.equipment || [];
+  const displayEquipment = equipment.length > 0 
+    ? equipment.map(eq => ({ icon: Info, label: eq }))
+    : [
+        { icon: Wifi, label: "Wifi tốc độ cao" },
+        { icon: Projector, label: "Máy chiếu HDMI" },
+        { icon: Wind, label: "Điều hòa" },
+        { icon: Info, label: "Bảng trắng" },
+      ];
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" style={{ margin: 0 }}>
@@ -405,8 +473,31 @@ function RoomDetailModal({ room, onClose, selectedDate }) {
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header: Ảnh Cover */}
-        <div className="h-52 relative shrink-0">
-          <img src={room.image} alt={room.name} className="w-full h-full object-cover" />
+        <div className="h-52 relative shrink-0 bg-gradient-to-br from-orange-400 to-red-500">
+          {(() => {
+            // Ưu tiên: facilityDetail.images[0] > room.image > fallback
+            const imageUrl = facilityDetail?.images?.[0] || room.image || "https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=800";
+            console.log('[RoomDetailModal] Using image URL:', imageUrl);
+            
+            return (
+              <img 
+                src={imageUrl} 
+                alt={room.name} 
+                className="w-full h-full object-cover" 
+                onError={(e) => {
+                  console.error('[RoomDetailModal] Image failed to load:', imageUrl);
+                  // Fallback nếu ảnh lỗi
+                  const fallbackUrl = "https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=800";
+                  if (e.target.src !== fallbackUrl) {
+                    e.target.src = fallbackUrl;
+                  }
+                }}
+                onLoad={() => {
+                  console.log('[RoomDetailModal] Image loaded successfully:', imageUrl);
+                }}
+              />
+            );
+          })()}
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
           
           <button 
@@ -436,7 +527,9 @@ function RoomDetailModal({ room, onClose, selectedDate }) {
               </div>
               <div>
                 <p className="text-xs text-gray-500 font-bold uppercase tracking-wide">Sức chứa</p>
-                <p className="font-bold text-gray-900 text-lg">{room.capacity} Người</p>
+                <p className="font-bold text-gray-900 text-lg">
+                  {loadingDetail ? "..." : (facilityDetail?.capacity || room.capacity)} Người
+                </p>
               </div>
             </div>
             <div className="p-4 rounded-xl bg-blue-50 border border-blue-100 flex items-center gap-4">
@@ -445,7 +538,9 @@ function RoomDetailModal({ room, onClose, selectedDate }) {
               </div>
               <div>
                 <p className="text-xs text-gray-500 font-bold uppercase tracking-wide">Loại phòng</p>
-                <p className="font-bold text-gray-900 text-lg">{room.type}</p>
+                <p className="font-bold text-gray-900 text-lg">
+                  {loadingDetail ? "..." : (facilityDetail?.type || room.type)}
+                </p>
               </div>
             </div>
             <div className="p-4 rounded-xl bg-green-50 border border-green-100 flex items-center gap-4">
@@ -453,8 +548,10 @@ function RoomDetailModal({ room, onClose, selectedDate }) {
                 <MapPin className="w-5 h-5"/>
               </div>
               <div>
-                <p className="text-xs text-gray-500 font-bold uppercase tracking-wide">Tòa nhà</p>
-                <p className="font-bold text-gray-900 text-lg">{room.building || "Alpha"}</p>
+                <p className="text-xs text-gray-500 font-bold uppercase tracking-wide">Cơ sở</p>
+                <p className="font-bold text-gray-900 text-lg">
+                  {loadingDetail ? "..." : (facilityDetail?.campus?.name || room.building || "N/A")}
+                </p>
               </div>
             </div>
             <div className="p-4 rounded-xl bg-purple-50 border border-purple-100 flex items-center gap-4">
@@ -463,10 +560,62 @@ function RoomDetailModal({ room, onClose, selectedDate }) {
               </div>
               <div>
                 <p className="text-xs text-gray-500 font-bold uppercase tracking-wide">Trạng thái</p>
-                <p className="font-bold text-gray-900 text-lg">Trống</p>
+                <p className="font-bold text-gray-900 text-lg">
+                  {loadingDetail ? "..." : (
+                    facilityDetail?.status === "ACTIVE" ? "Hoạt động" : 
+                    facilityDetail?.status === "INACTIVE" ? "Ngừng hoạt động" : 
+                    "Trống"
+                  )}
+                </p>
               </div>
             </div>
           </div>
+
+          {/* Thông tin chi tiết từ API */}
+          {!loadingDetail && facilityDetail && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+              {/* Type Information */}
+              {facilityDetail.type && (
+                <div className="p-4 rounded-xl bg-gray-50 border border-gray-200">
+                  <h4 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-gray-500" />
+                    Loại phòng
+                  </h4>
+                  <p className="text-base font-semibold text-gray-900 mb-1">
+                    {typeof facilityDetail.type === 'string' ? facilityDetail.type : facilityDetail.type.name}
+                  </p>
+                  {facilityDetail.typeId && (
+                    <p className="text-xs text-gray-500">ID: {facilityDetail.typeId}</p>
+                  )}
+                  {facilityDetail.type?.description && (
+                    <p className="text-sm text-gray-600 mt-2">{facilityDetail.type.description}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Campus Information */}
+              {facilityDetail.campus && (
+                <div className="p-4 rounded-xl bg-gray-50 border border-gray-200">
+                  <h4 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-gray-500" />
+                    Cơ sở
+                  </h4>
+                  <p className="text-base font-semibold text-gray-900 mb-1">
+                    {facilityDetail.campus.name}
+                  </p>
+                  {facilityDetail.campusId && (
+                    <p className="text-xs text-gray-500 mb-2">ID: {facilityDetail.campusId}</p>
+                  )}
+                  {facilityDetail.campus.address && (
+                    <p className="text-sm text-gray-600 flex items-center gap-1">
+                      <MapPin className="w-3 h-3" />
+                      {facilityDetail.campus.address}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Lịch biểu phòng */}
           <div className="mb-8">
@@ -531,51 +680,213 @@ function RoomDetailModal({ room, onClose, selectedDate }) {
             )}
           </div>
 
-          {/* Tiện ích */}
+          {/* Tiện ích / Thiết bị */}
           <div className="mb-8">
             <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
               <span className="w-1 h-5 bg-orange-500 rounded-full"></span>
-              Tiện ích có sẵn
+              {equipment.length > 0 ? "Thiết bị có sẵn" : "Thiết bị có sẵn"}
             </h3>
-            <div className="grid grid-cols-2 gap-3">
-              {amenities.map((item, idx) => (
-                <div key={idx} className="flex items-center gap-3 p-3 rounded-lg border border-gray-100 hover:border-orange-200 hover:bg-orange-50/50 transition-colors">
-                  <item.icon className="w-5 h-5 text-gray-400" />
-                  <span className="text-sm font-medium text-gray-700">{item.label}</span>
-                </div>
-              ))}
-            </div>
+            {loadingDetail ? (
+              <div className="text-center py-4">
+                <div className="animate-spin w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full mx-auto"></div>
+              </div>
+            ) : equipment.length > 0 ? (
+              <div className="grid grid-cols-2 gap-3">
+                {equipment.map((eq, idx) => (
+                  <div key={idx} className="flex items-center gap-3 p-3 rounded-lg border border-gray-100 hover:border-orange-200 hover:bg-orange-50/50 transition-colors">
+                    <Info className="w-5 h-5 text-gray-400" />
+                    <span className="text-sm font-medium text-gray-700">{eq}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-4 rounded-lg border border-gray-200 bg-gray-50 text-center">
+                <p className="text-sm text-gray-500">Phòng này hiện chưa có thiết bị được liệt kê</p>
+              </div>
+            )}
           </div>
 
           {/* Mô tả */}
           <div>
             <h3 className="font-bold text-gray-900 mb-2 flex items-center gap-2">
               <span className="w-1 h-5 bg-orange-500 rounded-full"></span>
-              Lưu ý sử dụng
+              Mô tả phòng
             </h3>
-            <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100 text-sm text-yellow-800 leading-relaxed">
-              Vui lòng tắt hết thiết bị điện (máy lạnh, đèn, máy chiếu) và đóng cửa cẩn thận sau khi sử dụng xong. 
-              Giữ vệ sinh chung cho người sử dụng sau.
-            </div>
+            {loadingDetail ? (
+              <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 text-sm text-gray-500">
+                <div className="animate-pulse">Đang tải mô tả...</div>
+              </div>
+            ) : facilityDetail?.description ? (
+              <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 text-sm text-gray-700 leading-relaxed">
+                {facilityDetail.description}
+              </div>
+            ) : (
+              <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 text-sm text-gray-500 italic">
+                Chưa có mô tả cho phòng này
+              </div>
+            )}
           </div>
+
+          {/* Gallery ảnh */}
+          {!loadingDetail && (
+            <div className="mt-8">
+              <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+                <span className="w-1 h-5 bg-orange-500 rounded-full"></span>
+                Hình ảnh phòng ({facilityDetail?.images?.length || 0} ảnh)
+              </h3>
+              {facilityDetail?.images && facilityDetail.images.length > 0 ? (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {facilityDetail.images.map((img, idx) => (
+                    <div key={idx} className="relative h-32 rounded-lg overflow-hidden border border-gray-200 hover:border-orange-300 transition-colors cursor-pointer group bg-gray-100">
+                      <img 
+                        src={img} 
+                        alt={`${room.name} ${idx + 1}`} 
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
+                        onError={(e) => {
+                          // Fallback nếu ảnh lỗi
+                          e.target.src = "https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=400";
+                        }}
+                      />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors"></div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-4 rounded-lg border border-gray-200 bg-gray-50 text-center">
+                  <p className="text-sm text-gray-500">Chưa có hình ảnh cho phòng này</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Thông tin kỹ thuật */}
+          {!loadingDetail && facilityDetail && (
+            <div className="mt-8 p-4 rounded-xl bg-gray-50 border border-gray-200">
+              <h3 className="font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <span className="w-1 h-5 bg-orange-500 rounded-full"></span>
+                Thông tin kỹ thuật
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                {facilityDetail.id && (
+                  <div>
+                    <span className="text-gray-500">ID Phòng:</span>
+                    <span className="ml-2 font-semibold text-gray-900">{facilityDetail.id}</span>
+                  </div>
+                )}
+                {facilityDetail.typeId && (
+                  <div>
+                    <span className="text-gray-500">ID Loại:</span>
+                    <span className="ml-2 font-semibold text-gray-900">{facilityDetail.typeId}</span>
+                  </div>
+                )}
+                {facilityDetail.campusId && (
+                  <div>
+                    <span className="text-gray-500">ID Cơ sở:</span>
+                    <span className="ml-2 font-semibold text-gray-900">{facilityDetail.campusId}</span>
+                  </div>
+                )}
+                {facilityDetail.status && (
+                  <div>
+                    <span className="text-gray-500">Trạng thái:</span>
+                    <span className={`ml-2 font-semibold ${
+                      facilityDetail.status === "ACTIVE" ? "text-green-600" : "text-red-600"
+                    }`}>
+                      {facilityDetail.status}
+                    </span>
+                  </div>
+                )}
+                {facilityDetail.type?.isActive !== undefined && (
+                  <div>
+                    <span className="text-gray-500">Loại hoạt động:</span>
+                    <span className={`ml-2 font-semibold ${
+                      facilityDetail.type.isActive ? "text-green-600" : "text-red-600"
+                    }`}>
+                      {facilityDetail.type.isActive ? "Hoạt động" : "Ngừng"}
+                    </span>
+                  </div>
+                )}
+                {facilityDetail.campus?.isActive !== undefined && (
+                  <div>
+                    <span className="text-gray-500">Cơ sở hoạt động:</span>
+                    <span className={`ml-2 font-semibold ${
+                      facilityDetail.campus.isActive ? "text-green-600" : "text-red-600"
+                    }`}>
+                      {facilityDetail.campus.isActive ? "Hoạt động" : "Ngừng"}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Booking Form */}
+          {showBookingForm && (
+            <div 
+              className="mt-8 border-t border-gray-200 pt-6"
+              ref={(el) => {
+                // Auto scroll to form when it appears
+                if (el) {
+                  setTimeout(() => {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }, 100);
+                }
+              }}
+            >
+              <BookingForm
+                room={room}
+                facilityDetail={facilityDetail}
+                selectedSlots={selectedSlots}
+                selectedDate={selectedDate}
+                onSuccess={(result) => {
+                  // Hiển thị success dialog
+                  setSuccessDialog({
+                    title: "Đặt phòng thành công!",
+                    message: result.message || "Yêu cầu đặt phòng đã được gửi thành công",
+                    bookingCode: result.bookingCode
+                  });
+                  // Reset form
+                  setShowBookingForm(false);
+                  setSelectedSlots([]);
+                }}
+                onCancel={() => {
+                  setShowBookingForm(false);
+                }}
+              />
+            </div>
+          )}
         </div>
 
         {/* Footer: Nút hành động */}
-        <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end gap-3 shrink-0">
-          <Button variant="secondary" onClick={onClose} className="hover:bg-gray-200 text-gray-600">
-            Đóng lại
-          </Button>
-          {selectedSlots.length > 0 && (
-            <Button 
-              onClick={() => setShowBookingForm(true)}
-              className="px-8 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white shadow-lg shadow-orange-200 border-none"
-            >
-              <CalendarCheck className="w-4 h-4 mr-2" />
-              Đặt phòng ({selectedSlots.length} slot)
+        {!showBookingForm && (
+          <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end gap-3 shrink-0">
+            <Button variant="secondary" onClick={onClose} className="hover:bg-gray-200 text-gray-600">
+              Đóng lại
             </Button>
-          )}
-        </div>
+            {selectedSlots.length > 0 && (
+              <Button 
+                onClick={() => setShowBookingForm(true)}
+                className="px-8 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white shadow-lg shadow-orange-200 border-none"
+              >
+                <CalendarCheck className="w-4 h-4 mr-2" />
+                Đặt phòng ({selectedSlots.length} slot)
+              </Button>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Success Dialog */}
+      {successDialog && (
+        <SuccessDialog
+          title={successDialog.title}
+          message={successDialog.message}
+          bookingCode={successDialog.bookingCode}
+          onClose={() => {
+            setSuccessDialog(null);
+            onClose(); // Đóng modal sau khi đóng dialog
+          }}
+        />
+      )}
     </div>,
     document.body
   );
