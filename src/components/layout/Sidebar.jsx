@@ -1,4 +1,14 @@
-import { Calendar, LayoutDashboard, History, CheckSquare, Package, BarChart3, Clock } from "lucide-react";
+import {
+  Calendar,
+  LayoutDashboard,
+  History,
+  CheckSquare,
+  Package,
+  BarChart3,
+  Clock,
+  Sparkles,
+  Home, // ✅ thêm icon cho “Danh sách phòng”
+} from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../context/AuthContext";
@@ -7,10 +17,18 @@ export default function Sidebar({ isOpen }) {
   const location = useLocation();
   const { user } = useAuth();
 
-  const STUDENT_MENU = [
+  const role = user?.role; // IN HOA: STUDENT | LECTURER | FACILITY_ADMIN | SECURITY | CLUB_LEADER (nếu có)
+
+  // ✅ Routes mới (thêm /booking/facilities)
+  const STUDENT_LECTURER_MENU = [
     { icon: LayoutDashboard, label: "Trang chủ", path: "/dashboard" },
-    { icon: Calendar, label: "Đặt phòng", path: "/booking" },
-    { icon: History, label: "Lịch sử", path: "/history" },
+    { icon: Home, label: "Danh sách phòng", path: "/booking/facilities" }, // ✅ NEW
+    { icon: Calendar, label: "Tìm phòng", path: "/booking/search" },
+    { icon: History, label: "Đơn của tôi", path: "/booking/my" },
+  ];
+
+  const CLUB_LEADER_EXTRA = [
+    { icon: Sparkles, label: "Gợi ý ưu tiên CLB", path: "/booking/club-suggestions" },
   ];
 
   const FACILITY_ADMIN_MENU = [
@@ -21,50 +39,70 @@ export default function Sidebar({ isOpen }) {
     { icon: Clock, label: "Lịch sử", path: "/admin-facility/history" },
   ];
 
-  let menuItems = STUDENT_MENU;
-  // Kiểm tra cả lowercase và uppercase role
-  if (user?.role === 'facility_admin' || user?.role === 'FACILITY_ADMIN') {
+  const SECURITY_MENU = [
+    { icon: CheckSquare, label: "Check-in/Out", path: "/security/checkin" },
+    { icon: Calendar, label: "Lịch hôm nay", path: "/security/schedule" },
+  ];
+
+  let menuItems = STUDENT_LECTURER_MENU;
+
+  if (role === "FACILITY_ADMIN") {
     menuItems = FACILITY_ADMIN_MENU;
+  } else if (role === "SECURITY") {
+    menuItems = SECURITY_MENU;
+  } else if (role === "CLUB_LEADER") {
+    menuItems = [...STUDENT_LECTURER_MENU, ...CLUB_LEADER_EXTRA];
+  } else {
+    menuItems = STUDENT_LECTURER_MENU;
   }
 
+  const isActivePath = (itemPath) => {
+    if (itemPath === "/dashboard") return location.pathname === "/dashboard";
+    return location.pathname === itemPath || location.pathname.startsWith(itemPath + "/");
+  };
+
   return (
-    <aside className={cn(
-      "fixed left-0 top-16 bottom-0 w-64 bg-white border-r border-gray-200 transition-transform duration-300 z-20",
-      // Logic: Nếu isOpen = false thì ẩn sang trái (-translate-x-full)
-      !isOpen && "-translate-x-full"
-    )}>
+    <aside
+      className={cn(
+        "fixed left-0 top-16 bottom-0 w-64 bg-white border-r border-gray-200 transition-transform duration-300 z-20",
+        !isOpen && "-translate-x-full"
+      )}
+    >
       <div className="flex flex-col h-full py-6 px-3">
-        
-        {/* Label Menu */}
         <div className="px-4 mb-2">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Menu Chính</span>
+          <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Menu Chính</span>
         </div>
 
         <nav className="space-y-1">
           {menuItems.map((item) => {
-            const isActive = location.pathname === item.path;
+            const isActive = isActivePath(item.path);
+
             return (
-              <Link key={item.path} to={item.path}
+              <Link
+                key={item.path}
+                to={item.path}
                 className={cn(
                   "flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all group",
-                  isActive 
-                    ? "bg-orange-50 text-orange-700" 
-                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                  isActive ? "bg-orange-50 text-orange-700" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                 )}
               >
-                <item.icon className={cn("w-5 h-5", isActive ? "text-orange-600" : "text-gray-400 group-hover:text-gray-600")} />
+                <item.icon
+                  className={cn(
+                    "w-5 h-5",
+                    isActive ? "text-orange-600" : "text-gray-400 group-hover:text-gray-600"
+                  )}
+                />
                 {item.label}
               </Link>
-            )
+            );
           })}
         </nav>
-        
-        {/* Phần dưới cùng có thể để thông tin version hoặc hình trang trí */}
+
         <div className="mt-auto px-4">
-            <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-4 text-center">
-                <p className="text-xs text-orange-800 font-semibold">FPTU Booking v1.0</p>
-                <p className="text-[10px] text-orange-600/70 mt-1">Hỗ trợ: swp391@fpt.edu.vn</p>
-            </div>
+          <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-4 text-center">
+            <p className="text-xs text-orange-800 font-semibold">FPTU Booking v1.0</p>
+            <p className="text-[10px] text-orange-600/70 mt-1">Hỗ trợ: swp391@fpt.edu.vn</p>
+          </div>
         </div>
       </div>
     </aside>

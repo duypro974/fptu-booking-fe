@@ -17,69 +17,47 @@ import {
   X,
   CalendarCheck,
   Info,
+  Sparkles,
 } from "lucide-react";
 
-// ✅ dùng service theo swagger
-import { searchAvailableRooms } from "../../services/bookingService";
-import { getRoomTypeColor } from "../../lib/roomTypeColors";
-
-// (Optional) nếu bạn đã có resourceService để load facility types từ BE
-// import { getFacilityTypes } from "../../services/resourceService";
+import { getClubSuggestions } from "../../services/bookingService";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
-export default function RoomSearch() {
+export default function ClubSuggestions() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
+  const [date, setDate] = useState(todayISO());
+  const [slot, setSlot] = useState(1);
+
+  const [keyword, setKeyword] = useState("");
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(false);
 
   const [selectedRoom, setSelectedRoom] = useState(null);
+  const [error, setError] = useState("");
 
-  // Filters (đúng swagger)
-  const [date, setDate] = useState(todayISO());
-  const [slot, setSlot] = useState(1);
-  const [typeId, setTypeId] = useState("");     // optional
-  const [capacity, setCapacity] = useState(""); // optional
+  const campusLabel = user?.campusName || `Campus #${user?.campusId ?? ""}`;
 
-  // Search theo tên phòng (client-side)
-  const [keyword, setKeyword] = useState("");
-
-  // (Optional) load types từ backend nếu bạn muốn dropdown typeId
-  // const [types, setTypes] = useState([]);
-  // useEffect(() => {
-  //   (async () => {
-  //     try {
-  //       const res = await getFacilityTypes();
-  //       setTypes(res?.data ?? []);
-  //     } catch (_) {}
-  //   })();
-  // }, []);
-
-  const fetchRooms = async () => {
+  const fetchSuggestions = async () => {
     setLoading(true);
+    setError("");
     try {
-      const data = await searchAvailableRooms({
-        date,
-        slot: Number(slot),
-        typeId: typeId ? Number(typeId) : undefined,
-        capacity: capacity ? Number(capacity) : undefined,
-      });
+      const data = await getClubSuggestions({ date, slot: Number(slot) });
 
-      // BE trả list room trống theo campus của user (swagger nói BE tự lọc campus)
+      // data thường là array
       setRooms(Array.isArray(data) ? data : (data?.items ?? []));
-    // eslint-disable-next-line no-unused-vars
     } catch (e) {
       setRooms([]);
+      setError(e?.response?.data?.message || "Không thể lấy danh sách gợi ý phòng ưu tiên.");
     } finally {
       setLoading(false);
     }
   };
 
-  // Auto load khi có user + campus (hoặc chỉ cần user)
   useEffect(() => {
-    if (user) fetchRooms();
+    if (user) fetchSuggestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
@@ -89,35 +67,44 @@ export default function RoomSearch() {
     return rooms.filter((r) => (r?.name || "").toLowerCase().includes(k));
   }, [rooms, keyword]);
 
-  const campusLabel = user?.campusName || `Campus #${user?.campusId ?? ""}`;
+  const goCreateBooking = (facilityId) => {
+    navigate(
+      `/booking/create?facilityId=${facilityId}&date=${encodeURIComponent(date)}&slots=${encodeURIComponent(
+        String(slot)
+      )}`
+    );
+  };
 
   return (
     <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
-      {/* 1. Header + Filter */}
-      <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
-        <div className="flex flex-col md:flex-row justify-between items-end gap-4">
-          <div>
+      {/* Header */}
+      <div className="flex flex-col md:flex-row justify-between items-end gap-4 bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+        <div>
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-6 h-6 text-orange-600" />
             <h1 className="text-2xl font-bold text-gray-900">
-              Đặt phòng tại {campusLabel}
+              Gợi ý phòng ưu tiên (CLB) — {campusLabel}
             </h1>
-            <p className="text-gray-500 mt-1">
-              Tìm kiếm và đặt chỗ nhanh chóng cho việc học tập & rèn luyện.
-            </p>
           </div>
-
-          <div className="relative w-full md:w-96">
-            <Search className="absolute left-3 top-3 text-gray-400 w-5 h-5" />
-            <input
-              className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-              placeholder="Tìm tên phòng (VD: Seminar, Sân bóng...)"
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-            />
-          </div>
+          <p className="text-gray-500 mt-1">
+            Hệ thống sắp xếp danh sách phòng theo mức độ ưu tiên CLB của bạn.
+          </p>
         </div>
 
-        {/* Filter đúng swagger: date, slot, typeId, capacity */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        <div className="relative w-full md:w-96">
+          <Search className="absolute left-3 top-3 text-gray-400 w-5 h-5" />
+          <input
+            className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+            placeholder="Tìm tên phòng..."
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="md:col-span-2">
             <label className="text-sm text-gray-600 font-medium">Ngày</label>
             <input
@@ -143,81 +130,62 @@ export default function RoomSearch() {
             </select>
           </div>
 
-          <div>
-            <label className="text-sm text-gray-600 font-medium">TypeId</label>
-            <input
-              className="mt-1 w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-              placeholder="VD: 1"
-              value={typeId}
-              onChange={(e) => setTypeId(e.target.value)}
-            />
-            {/* Nếu bạn có types dropdown: thay input này bằng select map types */}
-          </div>
-
-          <div>
-            <label className="text-sm text-gray-600 font-medium">Sức chứa</label>
-            <input
-              type="number"
-              min={1}
-              className="mt-1 w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-              placeholder="VD: 30"
-              value={capacity}
-              onChange={(e) => setCapacity(e.target.value)}
-            />
+          <div className="flex items-end">
+            <Button
+              className="w-full bg-orange-600 hover:bg-orange-700 text-white border-none"
+              onClick={fetchSuggestions}
+              disabled={loading}
+            >
+              {loading ? "Đang tải..." : "Lấy gợi ý"}
+            </Button>
           </div>
         </div>
 
-        <div className="flex gap-3">
-          <Button
-            className="bg-orange-600 hover:bg-orange-700 text-white border-none"
-            onClick={fetchRooms}
-            disabled={loading}
-          >
-            {loading ? "Đang tìm..." : "Tìm phòng"}
-          </Button>
-
-          <Button
-            variant="secondary"
-            onClick={() => {
-              setKeyword("");
-              setTypeId("");
-              setCapacity("");
-              setSlot(1);
-              setDate(todayISO());
-            }}
-          >
-            Reset
-          </Button>
-        </div>
+        {error && (
+          <div className="mt-4 p-4 rounded-xl bg-red-50 border border-red-100 text-sm text-red-700">
+            {error}
+          </div>
+        )}
       </div>
 
-      {/* 2. Grid Danh sách phòng */}
+      {/* Grid */}
       {loading ? (
         <div className="text-center py-20">
           <div className="animate-spin w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-400">Đang tải dữ liệu phòng...</p>
+          <p className="text-gray-400">Đang tải gợi ý phòng...</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredRooms.length > 0 ? (
-            filteredRooms.map((room) => {
-              // swagger search trả danh sách phòng trống => coi như available
-              const isAvailable =
-                room?.status ? room.status === "available" : true;
+            filteredRooms.map((room, idx) => {
+              // Gợi ý phòng ưu tiên => thường là phòng trống, coi như available
+              const isAvailable = room?.status ? room.status === "available" : true;
 
-              const typeName = room.typeName || room.type?.name || room.type || "Unknown";
-              const typeColor = getRoomTypeColor(typeName);
+              // Ưu tiên: BE có thể trả priorityScore hoặc rank
+              const priorityScore = room?.priorityScore ?? room?.priority ?? null;
+              const rank = room?.rank ?? (idx + 1);
 
               return (
                 <Card
-                  key={room.id}
+                  key={room.id ?? `${room.name}-${idx}`}
                   className="group hover:-translate-y-1 transition-all duration-300 p-0 overflow-hidden cursor-pointer border-gray-200 hover:border-orange-200 hover:shadow-lg"
-                  onClick={() => setSelectedRoom({ ...room, __available: isAvailable })}
+                  onClick={() =>
+                    setSelectedRoom({
+                      ...room,
+                      __available: isAvailable,
+                      __priorityScore: priorityScore,
+                      __rank: rank,
+                    })
+                  }
                 >
-                  {/* Ảnh phòng */}
                   <div className="h-56 overflow-hidden relative">
                     <img
-                      src={room.image || room.thumbnailUrl || room?.imageUrls?.[0] || "https://via.placeholder.com/800x500?text=Facility"}
+                      src={
+                        room.image ||
+                        room.thumbnailUrl ||
+                        room?.imageUrls?.[0] ||
+                        "https://via.placeholder.com/800x500?text=Facility"
+                      }
                       alt={room.name}
                       className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
                     />
@@ -228,7 +196,18 @@ export default function RoomSearch() {
                       </span>
                     </div>
 
-                    <div className="absolute top-3 right-3">
+                    <div className="absolute top-3 left-3">
+                      <Badge type="info" className="shadow-sm backdrop-blur-md bg-white/90">
+                        Ưu tiên #{rank}
+                      </Badge>
+                    </div>
+
+                    <div className="absolute top-3 right-3 flex gap-2">
+                      {priorityScore !== null && priorityScore !== undefined && (
+                        <Badge type="warning" className="shadow-sm backdrop-blur-md bg-white/90">
+                          Score {priorityScore}
+                        </Badge>
+                      )}
                       <Badge
                         type={isAvailable ? "success" : "danger"}
                         className="shadow-sm backdrop-blur-md bg-white/90"
@@ -238,15 +217,10 @@ export default function RoomSearch() {
                     </div>
                   </div>
 
-                  {/* Thông tin ngắn gọn */}
                   <div className="p-5">
-                    <h3 className="font-bold text-lg text-gray-900 mb-1 transition-colors">
-                      {room.name}
+                    <h3 className="font-bold text-lg text-gray-900 mb-1 group-hover:text-orange-600 transition-colors">
+                      {room.name || `Phòng #${room.id}`}
                     </h3>
-
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`${typeColor.labelBg} ${typeColor.labelText} px-2 py-0.5 rounded-full text-xs font-semibold`}>{typeName}</span>
-                    </div>
 
                     <div className="flex items-center text-sm text-gray-500 gap-4 mb-4">
                       <span className="flex items-center gap-1.5">
@@ -266,7 +240,7 @@ export default function RoomSearch() {
             })
           ) : (
             <div className="col-span-3 text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-300">
-              <p className="text-gray-500">Không tìm thấy phòng nào phù hợp.</p>
+              <p className="text-gray-500">Không có phòng gợi ý phù hợp.</p>
             </div>
           )}
         </div>
@@ -280,22 +254,13 @@ export default function RoomSearch() {
           date={date}
           slot={slot}
           onClose={() => setSelectedRoom(null)}
-          onConfirm={() => {
-            // ✅ chuyển sang trang tạo booking theo swagger
-            const facilityId = selectedRoom.id;
-            navigate(
-              `/booking/create?facilityId=${facilityId}&date=${encodeURIComponent(date)}&slots=${encodeURIComponent(
-                String(slot)
-              )}`
-            );
-          }}
+          onConfirm={() => goCreateBooking(selectedRoom.id)}
         />
       )}
     </div>
   );
 }
 
-// --- MODAL ---
 function RoomDetailModal({ room, campusLabel, date, slot, onClose, onConfirm }) {
   const amenities = [
     { icon: Wifi, label: "Wifi tốc độ cao" },
@@ -304,26 +269,28 @@ function RoomDetailModal({ room, campusLabel, date, slot, onClose, onConfirm }) 
     { icon: Info, label: "Bảng trắng" },
   ];
 
-  const isAvailable = room?.__available ?? (room?.status ? room.status === "available" : true);
-
-  const typeName = room.typeName || room.type?.name || room.type || "Unknown";
-  const typeColor = getRoomTypeColor(typeName);
+  const isAvailable =
+    room?.__available ?? (room?.status ? room.status === "available" : true);
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" style={{ margin: 0 }}>
       <div
         className="absolute inset-0 bg-gray-900/70 backdrop-blur-sm animate-fade-in"
         onClick={onClose}
-      />
+      ></div>
 
       <div
         className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] relative z-10 animate-zoom-in"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="h-52 relative shrink-0">
           <img
-            src={room.image || room.thumbnailUrl || room?.imageUrls?.[0] || "https://via.placeholder.com/800x500?text=Facility"}
+            src={
+              room.image ||
+              room.thumbnailUrl ||
+              room?.imageUrls?.[0] ||
+              "https://via.placeholder.com/800x500?text=Facility"
+            }
             alt={room.name}
             className="w-full h-full object-cover"
           />
@@ -345,7 +312,6 @@ function RoomDetailModal({ room, campusLabel, date, slot, onClose, onConfirm }) 
           </div>
         </div>
 
-        {/* Body */}
         <div className="p-6 md:p-8 overflow-y-auto custom-scrollbar">
           <div className="grid grid-cols-2 gap-4 mb-8">
             <div className="p-4 rounded-xl bg-orange-50 border border-orange-100 flex items-center gap-4">
@@ -357,20 +323,23 @@ function RoomDetailModal({ room, campusLabel, date, slot, onClose, onConfirm }) 
                 <p className="font-bold text-gray-900 text-lg">{room.capacity ?? "—"} Người</p>
               </div>
             </div>
-            <div className={`p-4 rounded-xl ${typeColor.bg} border ${typeColor.border} flex items-center gap-4`}>
-              <div className={`w-10 h-10 rounded-full bg-white flex items-center justify-center ${typeColor.text} shadow-sm`}>
+
+            <div className="p-4 rounded-xl bg-blue-50 border border-blue-100 flex items-center gap-4">
+              <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-blue-600 shadow-sm">
                 <Search className="w-5 h-5" />
               </div>
               <div>
                 <p className="text-xs text-gray-500 font-bold uppercase tracking-wide">Loại phòng</p>
-                <p className="font-bold text-gray-900 text-lg">{typeName}</p>
+                <p className="font-bold text-gray-900 text-lg">
+                  {room.typeName || room.type?.name || room.type || "—"}
+                </p>
               </div>
             </div>
           </div>
 
           <div className="mb-8">
             <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-              <span className={`w-1 h-5 ${typeColor.accent} rounded-full`}></span>
+              <span className="w-1 h-5 bg-orange-500 rounded-full"></span>
               Tiện ích có sẵn
             </h3>
             <div className="grid grid-cols-2 gap-3">
@@ -388,7 +357,7 @@ function RoomDetailModal({ room, campusLabel, date, slot, onClose, onConfirm }) 
 
           <div>
             <h3 className="font-bold text-gray-900 mb-2 flex items-center gap-2">
-              <span className={`w-1 h-5 ${typeColor.accent} rounded-full`}></span>
+              <span className="w-1 h-5 bg-orange-500 rounded-full"></span>
               Lưu ý sử dụng
             </h3>
             <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100 text-sm text-yellow-800 leading-relaxed">
@@ -398,7 +367,6 @@ function RoomDetailModal({ room, campusLabel, date, slot, onClose, onConfirm }) 
           </div>
         </div>
 
-        {/* Footer */}
         <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end gap-3 shrink-0">
           <Button variant="secondary" onClick={onClose} className="hover:bg-gray-200 text-gray-600">
             Đóng lại
