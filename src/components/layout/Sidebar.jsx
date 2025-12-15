@@ -1,4 +1,4 @@
-import { Calendar, LayoutDashboard, History, Shield, Globe, CheckSquare, Users, Package } from "lucide-react";
+import { Calendar, LayoutDashboard, History, Shield, Globe, CheckSquare, Users, Package, Sparkles, Home } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../context/AuthContext";
@@ -13,8 +13,13 @@ export default function Sidebar({ isOpen }) {
   // STUDENT & CLUB LEADER MENU (Club Leader có thêm quyền nhưng menu giống Student)
   const STUDENT_LECTURER_MENU = [
     { icon: LayoutDashboard, label: "Trang chủ", path: "/dashboard" },
-    { icon: Calendar, label: "Đặt phòng", path: "/booking" },
-    { icon: History, label: "Lịch sử", path: "/history" },
+    { icon: Home, label: "Danh sách phòng", path: "/booking/facilities" },
+    { icon: Calendar, label: "Tìm phòng", path: "/booking/search" },
+    { icon: History, label: "Đơn của tôi", path: "/booking/my" },
+  ];
+
+  const CLUB_LEADER_EXTRA = [
+    { icon: Sparkles, label: "Gợi ý ưu tiên CLB", path: "/booking/club-suggestions" },
   ];
 
   const STAFF_MENU = [
@@ -23,28 +28,6 @@ export default function Sidebar({ isOpen }) {
     { icon: Shield, label: "Quản lý Phòng", path: "/admin-campus/rooms" },
   ];
 
-  // FACILITY ADMIN MENU (Nhân viên quản lý phòng)
-  const FACILITY_ADMIN_MENU = [
-    { icon: CheckSquare, label: "Duyệt yêu cầu", path: "/admin-facility/approvals" },
-    { icon: Shield, label: "Quản lý Phòng", path: "/admin-facility/rooms" },
-    { icon: Package, label: "Quản lý Thiết bị", path: "/admin-facility/equipment" },
-    { icon: Users, label: "Quản lý CLB", path: "/admin-facility/clubs" },
-    { icon: History, label: "Lịch sử", path: "/admin-facility/history" },
-  ];
-
-  // Xác định menu dựa trên role (hỗ trợ cả lowercase và uppercase)
-  const userRole = user?.role?.toLowerCase();
-  let menuItems = STUDENT_MENU;
-  if (userRole === 'campus_admin') menuItems = STAFF_MENU;
-  if (userRole === 'facility_admin') menuItems = FACILITY_ADMIN_MENU;
-  
-  // Debug logging
-  if (user) {
-    console.log('[Sidebar] User:', user);
-    console.log('[Sidebar] User role (raw):', user?.role);
-    console.log('[Sidebar] User role (normalized):', userRole);
-    console.log('[Sidebar] Selected menu items:', menuItems.length, menuItems.map(m => m.label));
-  }
   const SECURITY_MENU = [
     { icon: CheckSquare, label: "Check-in/Out", path: "/security/checkin" },
     { icon: Calendar, label: "Lịch hôm nay", path: "/security/schedule" },
@@ -53,7 +36,11 @@ export default function Sidebar({ isOpen }) {
   // FACILITY ADMIN MENU (Nhân viên quản lý phòng)
   const FACILITY_ADMIN_MENU = [
     { icon: Globe, label: "Toàn hệ thống", path: "/admin-facility" },
+    { icon: CheckSquare, label: "Duyệt yêu cầu", path: "/admin-facility/approvals" },
+    { icon: Shield, label: "Quản lý Phòng", path: "/admin-facility/rooms" },
+    { icon: Package, label: "Quản lý Thiết bị", path: "/admin-facility/equipment" },
     { icon: Users, label: "Quản lý Tài khoản", path: "/admin-facility/users" },
+    { icon: History, label: "Lịch sử", path: "/admin-facility/history" },
   ];
 
   // Xác định menu dựa trên role
@@ -91,7 +78,7 @@ export default function Sidebar({ isOpen }) {
 
         <nav className="space-y-1">
           {menuItems.map((item) => {
-            const isActive = location.pathname === item.path;
+            const isActive = isActivePath(item.path);
             return (
               <Link key={item.path} to={item.path}
                 className={cn(
