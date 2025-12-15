@@ -114,9 +114,12 @@ export const api = {
         );
       }
       
-      // Chỉ filter maintenance nếu không yêu cầu allStatuses
+      // Filter phòng inactive và maintenance nếu không yêu cầu allStatuses
+      // Chỉ hiển thị phòng ACTIVE cho user thông thường
       if (!allStatuses) {
-        filtered = filtered.filter(room => room.facilityStatus !== 'maintenance');
+        filtered = filtered.filter(room => 
+          room.status === 'active' && room.facilityStatus === 'available'
+        );
       }
       
       console.log('[getRooms] Filtered rooms:', filtered.length);
@@ -472,6 +475,241 @@ export const api = {
       return data;
     } catch (error) {
       console.error('[rejectBooking] Error:', error);
+      throw error;
+    }
+  },
+
+  // PATCH /bookings/{id}/move - Chuyển phòng (MW6)
+  moveBooking: async (bookingId, newFacilityId, reason) => {
+    try {
+      console.log('[moveBooking] Calling with:', { bookingId, newFacilityId, reason });
+      const payload = { 
+        newFacilityId: parseInt(newFacilityId), // Backend expect newFacilityId (not facilityId)
+        reason: reason || "Chuyển phòng theo yêu cầu admin"
+      };
+      console.log('[moveBooking] Payload:', payload);
+      const data = await apiRequest(`/bookings/${bookingId}/move`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload)
+      });
+      return data;
+    } catch (error) {
+      console.error('[moveBooking] Error:', error);
+      throw error;
+    }
+  },
+
+  // ========== MAINTENANCE APIs (MW6.1) ==========
+  // GET /maintenance/check-impact - Kiểm tra va chạm trước khi bảo trì
+  checkMaintenanceImpact: async ({ facilityId, startDate, endDate }) => {
+    try {
+      const params = new URLSearchParams();
+      params.append('facilityId', facilityId);
+      params.append('startDate', startDate);
+      if (endDate) {
+        params.append('endDate', endDate);
+      }
+      
+      const data = await apiRequest(`/maintenance/check-impact?${params.toString()}`);
+      return data; // { conflicts: [...], canProceed: boolean }
+    } catch (error) {
+      console.error('[checkMaintenanceImpact] Error:', error);
+      throw error;
+    }
+  },
+
+  // ========== USER APIs (SW5) ==========
+  // GET /users - Danh sách nhân sự/người dùng
+  getUsers: async (filters = {}) => {
+    try {
+      const { campusId, role, status, searchQuery } = filters;
+      const params = new URLSearchParams();
+      
+      if (campusId) params.append('campusId', campusId);
+      if (role) params.append('role', role);
+      if (status) params.append('status', status);
+      if (searchQuery) params.append('search', searchQuery);
+      
+      const queryString = params.toString();
+      const users = await apiRequest(`/users${queryString ? `?${queryString}` : ''}`);
+      return users; // User[]
+    } catch (error) {
+      console.error('[getUsers] Error:', error);
+      throw error;
+    }
+  },
+
+  // PATCH /users/{id}/status - Khóa/Mở khóa tài khoản
+  updateUserStatus: async (userId, status) => {
+    try {
+      const data = await apiRequest(`/users/${userId}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status })
+      });
+      return data; // User
+    } catch (error) {
+      console.error('[updateUserStatus] Error:', error);
+      throw error;
+    }
+  },
+
+  // ========== EQUIPMENT APIs (SW1) ==========
+  // GET /equipment - Danh sách thiết bị (có thể có hoặc không có endpoint này)
+  getAllEquipment: async (campusId = null) => {
+    try {
+      const params = new URLSearchParams();
+      if (campusId) {
+        params.append('campusId', campusId);
+      }
+      
+      const queryString = params.toString();
+      const equipment = await apiRequest(`/equipment${queryString ? `?${queryString}` : ''}`);
+      console.log('[getAllEquipment] Raw equipment data:', equipment);
+      console.log('[getAllEquipment] Total equipment received:', equipment?.length || 0);
+      
+      // Map dữ liệu để đảm bảo format nhất quán
+      return (equipment || []).map(eq => ({
+        ...eq, // Giữ nguyên tất cả dữ liệu gốc
+        id: eq.id,
+        name: eq.name || eq.equipmentName || 'Unknown',
+        roomId: eq.facilityId || eq.roomId || null,
+        roomName: eq.facility?.name || eq.roomName || eq.facilityName || null,
+        quantity: eq.quantity || eq.amount || 1,
+        status: eq.status || 'available',
+        description: eq.description || '',
+        typeId: eq.typeId || eq.equipmentTypeId || null,
+        typeName: eq.type?.name || eq.equipmentType?.name || null,
+      }));
+    } catch (error) {
+      console.error('[getAllEquipment] Error:', error);
+      // Nếu API không tồn tại (404), trả về empty array
+      if (error.status === 404 || error.message?.includes('404')) {
+        console.warn('[getAllEquipment] API endpoint không tồn tại, trả về empty array');
+        return [];
+      }
+      throw error;
+    }
+  },
+
+  // GET /equipment/types - Danh sách loại thiết bị
+  getEquipmentTypes: async () => {
+    try {
+      const types = await apiRequest('/equipment/types');
+      return types; // EquipmentType[]
+    } catch (error) {
+      console.error('[getEquipmentTypes] Error:', error);
+      throw error;
+    }
+  },
+
+  // POST /equipment/types - Tạo loại thiết bị mới
+  createEquipmentType: async (payload) => {
+    try {
+      const data = await apiRequest('/equipment/types', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      return data; // EquipmentType
+    } catch (error) {
+      console.error('[createEquipmentType] Error:', error);
+      throw error;
+    }
+  },
+
+  // POST /equipment/facilities/{facilityId} - Thêm thiết bị vào phòng
+  addEquipmentToFacility: async (facilityId, payload) => {
+    try {
+      const data = await apiRequest(`/equipment/facilities/${facilityId}`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      return data; // Equipment
+    } catch (error) {
+      console.error('[addEquipmentToFacility] Error:', error);
+      throw error;
+    }
+  },
+
+  // POST /equipment - Tạo thiết bị mới
+  // Lưu ý: Backend chỉ có POST /equipment/facilities/{facilityId}, không có POST /equipment
+  // Nên phải dùng addEquipmentToFacility với roomId
+  createEquipment: async (payload) => {
+    try {
+      // Bắt buộc phải có roomId để thêm thiết bị vào phòng
+      if (!payload.roomId) {
+        throw new Error('roomId là bắt buộc để tạo thiết bị');
+      }
+
+      // Payload format cho POST /equipment/facilities/{facilityId}
+      // Cần equipmentTypeId (bắt buộc) và các field khác
+      if (!payload.typeId) {
+        throw new Error('typeId (equipmentTypeId) là bắt buộc để tạo thiết bị');
+      }
+
+      const equipmentPayload = {
+        equipmentTypeId: parseInt(payload.typeId), // Bắt buộc
+        quantity: parseInt(payload.quantity) || 1,
+        status: payload.status || 'available',
+      };
+
+      // Các field tùy chọn
+      if (payload.name) {
+        equipmentPayload.name = payload.name;
+      }
+      if (payload.description) {
+        equipmentPayload.description = payload.description;
+      }
+
+      console.log('[createEquipment] Calling addEquipmentToFacility with:', {
+        facilityId: payload.roomId,
+        payload: equipmentPayload
+      });
+
+      return await api.addEquipmentToFacility(payload.roomId, equipmentPayload);
+    } catch (error) {
+      console.error('[createEquipment] Error:', error);
+      throw error;
+    }
+  },
+
+  // PUT /equipment/{id} - Cập nhật thiết bị
+  updateEquipment: async (id, payload) => {
+    try {
+      const data = await apiRequest(`/equipment/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+      return data;
+    } catch (error) {
+      console.error('[updateEquipment] Error:', error);
+      throw error;
+    }
+  },
+
+  // DELETE /equipment/{id} - Xóa thiết bị
+  deleteEquipment: async (id) => {
+    try {
+      const data = await apiRequest(`/equipment/${id}`, {
+        method: 'DELETE'
+      });
+      return data;
+    } catch (error) {
+      console.error('[deleteEquipment] Error:', error);
+      throw error;
+    }
+  },
+
+  // GET /equipment/{id}/history - Lịch sử thiết bị
+  getEquipmentHistory: async (id) => {
+    try {
+      const history = await apiRequest(`/equipment/${id}/history`);
+      return history || [];
+    } catch (error) {
+      console.error('[getEquipmentHistory] Error:', error);
+      // Nếu API không tồn tại, trả về empty array
+      if (error.status === 404 || error.message?.includes('404')) {
+        return [];
+      }
       throw error;
     }
   },

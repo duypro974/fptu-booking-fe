@@ -14,6 +14,83 @@ export const getStatistics = async (campusId, dateRange = "week") => {
   return res.data;
 };
 
+// GET /bookings/search - Lấy danh sách phòng trống hiện tại (theo thời gian thực)
+export const getAvailableFacilities = async (campusId) => {
+  try {
+    // Lấy date hôm nay (YYYY-MM-DD)
+    const today = new Date();
+    const date = today.toISOString().split('T')[0];
+    
+    // Tính slot hiện tại dựa vào giờ
+    const currentHour = today.getHours();
+    let currentSlot = 1; // Default slot 1
+    
+    // Slot mapping: 1 (7-9), 2 (9-11), 3 (11-13), 4 (13-15), 5 (15-17)
+    if (currentHour >= 7 && currentHour < 9) currentSlot = 1;
+    else if (currentHour >= 9 && currentHour < 11) currentSlot = 2;
+    else if (currentHour >= 11 && currentHour < 13) currentSlot = 3;
+    else if (currentHour >= 13 && currentHour < 15) currentSlot = 4;
+    else if (currentHour >= 15 && currentHour < 17) currentSlot = 5;
+    else {
+      // Ngoài giờ học (trước 7h hoặc sau 17h), lấy slot tiếp theo hoặc slot cuối
+      if (currentHour < 7) currentSlot = 1;
+      else currentSlot = 5;
+    }
+    
+    console.log('[getAvailableFacilities] Calling with:', { date, slot: currentSlot, campusId });
+    
+    // Gọi API search available rooms
+    // Lưu ý: API /bookings/search có thể không hỗ trợ campusId trực tiếp
+    // Nếu cần, có thể filter client-side sau khi nhận response
+    const availableRooms = await api.searchAvailableRooms({
+      date: date,
+      slot: currentSlot
+    });
+    
+    console.log('[getAvailableFacilities] Received raw:', availableRooms?.length || 0, 'available rooms');
+    console.log('[getAvailableFacilities] Sample room data:', availableRooms?.[0]);
+    
+    // Filter theo campusId nếu có (client-side)
+    // Vì API có thể trả về tất cả phòng, cần filter theo campus
+    let filteredRooms = availableRooms;
+    if (campusId && Array.isArray(availableRooms) && availableRooms.length > 0) {
+      // Map campusId sang campus string để so sánh
+      const campusMap = { 1: 'hn', 2: 'hcm', 3: 'dn', 4: 'ct', 5: 'qn' };
+      const campusString = campusMap[campusId] || null;
+      
+      filteredRooms = availableRooms.filter(room => {
+        // Kiểm tra nhiều format: room.campus, room.campusId, room.facility?.campusId
+        const roomCampusId = room.campusId || room.facility?.campusId || room.facilityId;
+        const roomCampus = room.campus || (roomCampusId ? campusMap[roomCampusId] : null);
+        
+        const matches = roomCampusId === campusId || roomCampus === campusString;
+        if (!matches && roomCampusId) {
+          console.log('[getAvailableFacilities] Filtered out room:', room.name || room.id, 'campusId:', roomCampusId, 'expected:', campusId);
+        }
+        return matches;
+      });
+      
+      console.log('[getAvailableFacilities] Filtered by campusId', campusId, ':', filteredRooms.length, 'rooms (from', availableRooms.length, 'total)');
+    }
+    
+    console.log('[getAvailableFacilities] Final filtered rooms:', filteredRooms);
+    
+    // Trả về array các facility IDs hoặc array đầy đủ
+    return Array.isArray(filteredRooms) ? filteredRooms : [];
+  } catch (error) {
+    console.error('[getAvailableFacilities] Error:', error);
+    // Nếu lỗi, trả về empty array để không crash UI
+    const status = error.response?.status;
+    if (status === 404 || status === 403 || status === 401) {
+      console.warn('[getAvailableFacilities] API returned', status, '- returning empty array');
+      return [];
+    }
+    // Với các lỗi khác, vẫn trả về empty array để không crash
+    console.warn('[getAvailableFacilities] Error occurred, returning empty array to prevent UI crash');
+    return [];
+  }
+};
+
 // GET /bookings/history?campusId (hoặc /admin/history?campusId)
 export const getAllHistory = async (campusId) => {
   try {

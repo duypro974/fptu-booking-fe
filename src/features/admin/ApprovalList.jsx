@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, X, Clock, Calendar, User, Building2, AlertCircle, Info, Users } from "lucide-react";
+import { Check, X, Clock, Calendar, User, Building2, AlertCircle, Info, Users, ArrowLeftRight } from "lucide-react";
 import { api } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import Button from "../../components/ui/Button";
@@ -13,8 +13,14 @@ export default function ApprovalList() {
   const [loading, setLoading] = useState(true);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showApproveModal, setShowApproveModal] = useState(false);
+  const [showMoveModal, setShowMoveModal] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [moveReason, setMoveReason] = useState("");
+  const [moveAvailableRooms, setMoveAvailableRooms] = useState([]);
+  const [selectedMoveRoom, setSelectedMoveRoom] = useState(null);
+  const [loadingMoveRooms, setLoadingMoveRooms] = useState(false);
+  const [moving, setMoving] = useState(false);
   const [conflictCount, setConflictCount] = useState(0);
   const [conflictList, setConflictList] = useState([]);
   const [availableRooms, setAvailableRooms] = useState([]);
@@ -22,6 +28,7 @@ export default function ApprovalList() {
   const [loadingAvailableRooms, setLoadingAvailableRooms] = useState(false);
   const [roomStatus, setRoomStatus] = useState(null); // 'active', 'maintenance', 'inactive'
   const [isRoomMaintenance, setIsRoomMaintenance] = useState(false);
+  const [isRoomInactive, setIsRoomInactive] = useState(false);
   const [isUsingFallback, setIsUsingFallback] = useState(false); // Track xem có đang dùng fallback không
 
   // Chỉ Facility Admin mới có quyền chuyển phòng
@@ -429,21 +436,26 @@ export default function ApprovalList() {
     setSelectedNewRoom(null);
     setAvailableRooms([]);
     setIsRoomMaintenance(false);
+    setIsRoomInactive(false);
     setIsUsingFallback(false); // Reset fallback flag
     
     // Lấy roomId và kiểm tra trạng thái phòng
     const currentRoomId = request.facilityId || request.roomId || request.facility?.id;
     let roomMaintenance = false;
+    let roomInactive = false;
     
     // Kiểm tra trạng thái phòng từ request data trước (nếu có)
     const requestRoomStatus = request.facility?.status || request.room?.status || request.status;
     if (requestRoomStatus === 'MAINTENANCE' || requestRoomStatus === 'maintenance') {
       roomMaintenance = true;
       setIsRoomMaintenance(true);
+    } else if (requestRoomStatus === 'INACTIVE' || requestRoomStatus === 'inactive') {
+      roomInactive = true;
+      setIsRoomInactive(true);
     }
     
     // Nếu chưa có thông tin từ request, gọi API để kiểm tra (chỉ Facility Admin)
-    if (!roomMaintenance && currentRoomId && isFacilityAdmin) {
+    if (!roomMaintenance && !roomInactive && currentRoomId && isFacilityAdmin) {
       try {
         const roomDetail = await api.getFacilityDetail(currentRoomId);
         const roomStatusValue = roomDetail?.status || roomDetail?.facilityStatus;
@@ -453,6 +465,12 @@ export default function ApprovalList() {
             roomDetail?.status === 'MAINTENANCE' || roomDetail?.facilityStatus === 'maintenance') {
           roomMaintenance = true;
           setIsRoomMaintenance(true);
+        }
+        // Kiểm tra nếu phòng đang ngừng hoạt động
+        else if (roomStatusValue === 'INACTIVE' || roomStatusValue === 'inactive' ||
+                 roomDetail?.status === 'INACTIVE' || roomDetail?.facilityStatus === 'inactive') {
+          roomInactive = true;
+          setIsRoomInactive(true);
         }
       } catch (error) {
         console.error("[handleApprove] Lỗi kiểm tra trạng thái phòng:", error);
@@ -474,8 +492,9 @@ export default function ApprovalList() {
     
     // Fetch available rooms nếu:
     // 1. Có conflict HOẶC
-    // 2. Phòng đang bảo trì
-    const shouldFetchRooms = (conflicts.length > 0 || roomMaintenance) && 
+    // 2. Phòng đang bảo trì HOẶC
+    // 3. Phòng đang ngừng hoạt động
+    const shouldFetchRooms = (conflicts.length > 0 || roomMaintenance || roomInactive) && 
                               request.startTime && 
                               request.endTime && 
                               isFacilityAdmin;
@@ -483,6 +502,7 @@ export default function ApprovalList() {
     console.log("[handleApprove] shouldFetchRooms:", shouldFetchRooms, {
       hasConflicts: conflicts.length > 0,
       roomMaintenance,
+      roomInactive,
       hasStartTime: !!request.startTime,
       hasEndTime: !!request.endTime,
       isFacilityAdmin
@@ -522,8 +542,145 @@ export default function ApprovalList() {
     }
   };
 
+  const handleOpenMove = async (request) => {
+    setSelectedRequest(request);
+    setSelectedMoveRoom(null);
+    setMoveReason("");
+    setMoveAvailableRooms([]);
+    setLoadingMoveRooms(true);
+    setShowMoveModal(true);
+
+    // Lấy roomId hiện tại
+    const currentRoomId = request.facilityId || request.roomId || request.facility?.id;
+
+    // Fetch available rooms cho khung giờ của booking
+    if (request.startTime && request.endTime) {
+      try {
+        // Gọi fetchAvailableRooms để lấy danh sách phòng trống
+        await fetchAvailableRooms(request.startTime, request.endTime, currentRoomId);
+        // Filter bỏ phòng hiện tại từ availableRooms state
+        const filteredRooms = availableRooms.filter(room => {
+          const roomId = room.id?.toString();
+          const currentId = currentRoomId?.toString();
+          return roomId !== currentId;
+        });
+        setMoveAvailableRooms(filteredRooms);
+      } catch (error) {
+        console.error("[handleOpenMove] Lỗi fetch available rooms:", error);
+        // Fallback: Lấy tất cả phòng ACTIVE (trừ phòng hiện tại)
+        try {
+          const campusId = user?.campusId || (user?.campus === 'hcm' ? 2 : 1);
+          const allRooms = await api.getRooms({ 
+            campusId, 
+            includeInactive: false,
+            allStatuses: false 
+          });
+          const filteredRooms = (allRooms || []).filter(room => {
+            const roomId = room.id?.toString();
+            const currentId = currentRoomId?.toString();
+            return roomId !== currentId && room.status === 'active';
+          });
+          setMoveAvailableRooms(filteredRooms);
+        } catch (fallbackError) {
+          console.error("[handleOpenMove] Lỗi fallback:", fallbackError);
+          setMoveAvailableRooms([]);
+        }
+      }
+    } else {
+      // Nếu không có startTime/endTime, lấy tất cả phòng ACTIVE
+      try {
+        const campusId = user?.campusId || (user?.campus === 'hcm' ? 2 : 1);
+        const allRooms = await api.getRooms({ 
+          campusId, 
+          includeInactive: false,
+          allStatuses: false 
+        });
+        const filteredRooms = (allRooms || []).filter(room => {
+          const roomId = room.id?.toString();
+          const currentId = currentRoomId?.toString();
+          return roomId !== currentId && room.status === 'active';
+        });
+        setMoveAvailableRooms(filteredRooms);
+      } catch (error) {
+        console.error("[handleOpenMove] Lỗi lấy danh sách phòng:", error);
+        setMoveAvailableRooms([]);
+      }
+    }
+
+    setLoadingMoveRooms(false);
+  };
+
+  const confirmMove = async () => {
+    if (!selectedMoveRoom?.id) {
+      alert("Vui lòng chọn phòng mới!");
+      return;
+    }
+
+    if (!moveReason.trim()) {
+      alert("Vui lòng nhập lý do chuyển phòng!");
+      return;
+    }
+
+    console.log("[confirmMove] Selected room:", selectedMoveRoom);
+    console.log("[confirmMove] Room ID:", selectedMoveRoom.id, "Type:", typeof selectedMoveRoom.id);
+    console.log("[confirmMove] Request status:", selectedRequest.status);
+
+    setMoving(true);
+    try {
+      // Đảm bảo ID là number
+      const facilityId = parseInt(selectedMoveRoom.id);
+      if (isNaN(facilityId)) {
+        throw new Error("ID phòng không hợp lệ");
+      }
+      
+      // Kiểm tra trạng thái đơn: Nếu chưa được duyệt (PENDING), duyệt trước rồi mới chuyển phòng
+      const requestStatus = selectedRequest.status?.toUpperCase() || selectedRequest.bookingStatus?.toUpperCase() || 'PENDING';
+      const isPending = requestStatus === 'PENDING' || requestStatus === 'pending';
+      
+      if (isPending) {
+        // Đơn chưa được duyệt: Duyệt với phòng mới luôn (sử dụng alternativeFacilityId)
+        console.log("[confirmMove] Đơn chưa được duyệt, duyệt với phòng mới...");
+        await api.approveBooking(
+          selectedRequest.id, 
+          user.campus, 
+          user?.name || "Admin",
+          facilityId // Chuyển sang phòng mới khi duyệt
+        );
+      } else {
+        // Đơn đã được duyệt: Chuyển phòng bình thường
+        console.log("[confirmMove] Đơn đã được duyệt, chuyển phòng...");
+        await api.moveBooking(selectedRequest.id, facilityId, moveReason.trim());
+      }
+      
+      await loadRequests();
+      
+      const roomName = selectedMoveRoom.name || selectedMoveRoom.facilityName;
+      setShowMoveModal(false);
+      setSelectedRequest(null);
+      setSelectedMoveRoom(null);
+      setMoveReason("");
+      setMoveAvailableRooms([]);
+      
+      const message = isPending 
+        ? `Đã duyệt và chuyển sang phòng ${roomName} thành công!`
+        : `Đã chuyển sang phòng ${roomName} thành công!`;
+      alert(message);
+    } catch (error) {
+      console.error("[confirmMove] Error:", error);
+      alert(error.message || "Lỗi khi chuyển phòng! Vui lòng thử lại.");
+    } finally {
+      setMoving(false);
+    }
+  };
+
   const confirmApprove = async () => {
     try {
+      // Validation: Nếu phòng đang ngừng hoạt động, BẮT BUỘC phải chuyển phòng hoặc từ chối
+      if (isRoomInactive && !selectedNewRoom?.id) {
+        alert("⚠️ Phòng đang ngừng hoạt động. Vui lòng chọn phòng thay thế hoặc từ chối đơn này.");
+        return;
+      }
+
       // Chỉ Facility Admin mới có thể chuyển phòng
       const alternativeFacilityId = (isFacilityAdmin && selectedNewRoom?.id) || null;
       
@@ -771,6 +928,17 @@ export default function ApprovalList() {
                       <X className="w-4 h-4" />
                       Từ chối
                     </Button>
+                    {isFacilityAdmin && (
+                      <Button
+                        variant="secondary"
+                        className="w-full bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100"
+                        onClick={() => handleOpenMove(req)}
+                        title="Chuyển phòng khác"
+                      >
+                        <ArrowLeftRight className="w-4 h-4" />
+                        Chuyển phòng
+                      </Button>
+                    )}
                     <div className="text-xs text-gray-500 text-center pt-2">
                       Đơn #{req.bookingCode || req.id}
                     </div>
@@ -869,8 +1037,22 @@ export default function ApprovalList() {
                   Bạn đang duyệt yêu cầu đặt phòng <strong>{selectedRequest.roomName}</strong> của <strong>{selectedRequest.userName}</strong>.
                 </p>
 
-                {(conflictCount > 0 || isRoomMaintenance) ? (
+                {(conflictCount > 0 || isRoomMaintenance || isRoomInactive) ? (
                   <div className="space-y-4">
+                    {/* Alert phòng ngừng hoạt động */}
+                    {isRoomInactive && (
+                      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                        <div className="flex items-center gap-2 text-sm font-medium text-red-900 mb-2">
+                          <AlertCircle className="w-4 h-4" />
+                          <span>⚠️ Phòng đang ngừng hoạt động</span>
+                        </div>
+                        <p className="text-sm text-red-800">
+                          Phòng <strong>{selectedRequest.roomName}</strong> đang trong trạng thái <strong>Ngừng hoạt động</strong>. 
+                          Bạn <strong>PHẢI</strong> chuyển đơn sang phòng khác hoặc từ chối đơn này.
+                        </p>
+                      </div>
+                    )}
+
                     {/* Alert phòng bảo trì */}
                     {isRoomMaintenance && (
                       <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
@@ -992,6 +1174,7 @@ export default function ApprovalList() {
                       <p className="text-sm text-blue-800">
                         <strong>Lưu ý:</strong>
                         {conflictCount > 0 && ` Nếu bạn duyệt đơn này, ${conflictCount} yêu cầu trùng lịch sẽ tự động bị từ chối.`}
+                        {isRoomInactive && " ⚠️ Phòng đang ngừng hoạt động, không thể sử dụng. Bạn PHẢI chuyển phòng hoặc từ chối đơn."}
                         {isRoomMaintenance && " Phòng đang bảo trì, không thể sử dụng."}
                         {isFacilityAdmin && selectedNewRoom && " Đơn này sẽ được chuyển sang phòng mới."}
                       </p>
@@ -1024,6 +1207,8 @@ export default function ApprovalList() {
                     setConflictList([]);
                     setSelectedNewRoom(null);
                     setAvailableRooms([]);
+                    setIsRoomMaintenance(false);
+                    setIsRoomInactive(false);
                   }}
                 >
                   Hủy
@@ -1031,8 +1216,139 @@ export default function ApprovalList() {
                 <Button 
                   variant="primary" 
                   onClick={confirmApprove}
+                  disabled={isRoomInactive && !selectedNewRoom?.id}
                 >
-                  {isFacilityAdmin && selectedNewRoom ? "Duyệt và chuyển phòng" : "Xác nhận duyệt"}
+                  {isRoomInactive && !selectedNewRoom?.id 
+                    ? "Chọn phòng thay thế" 
+                    : isFacilityAdmin && selectedNewRoom 
+                      ? "Duyệt và chuyển phòng" 
+                      : "Xác nhận duyệt"}
+                </Button>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Chuyển phòng */}
+      {showMoveModal && selectedRequest && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="fixed inset-0 bg-black/50 transition-opacity" aria-hidden="true" />
+          <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
+            <Card className="relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg max-h-[90vh] flex flex-col">
+              <div className="flex justify-between items-center mb-4 px-6 pt-6">
+                <h2 className="text-xl font-bold text-gray-900">
+                  Chuyển đổi phòng cho đơn #{selectedRequest.bookingCode || selectedRequest.id}
+                </h2>
+                <button
+                  onClick={() => {
+                    setShowMoveModal(false);
+                    setSelectedRequest(null);
+                    setSelectedMoveRoom(null);
+                    setMoveReason("");
+                    setMoveAvailableRooms([]);
+                  }}
+                  className="text-gray-400 hover:text-gray-600 text-2xl"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="mb-4 px-6 overflow-y-auto flex-1">
+                {/* Thông tin giờ đặt hiện tại */}
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
+                  <div className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                    <Clock className="w-4 h-4" />
+                    <span>Giờ đặt hiện tại</span>
+                  </div>
+                  <p className="text-sm text-gray-900">
+                    <strong>Phòng:</strong> {selectedRequest.roomName || "N/A"}
+                  </p>
+                  <p className="text-sm text-gray-900">
+                    <strong>Thời gian:</strong> {formatTime(selectedRequest.startTime, selectedRequest.endTime)}
+                  </p>
+                  <p className="text-sm text-gray-900">
+                    <strong>Ngày:</strong> {formatDate(selectedRequest.date)}
+                  </p>
+                </div>
+
+                {/* Chọn phòng mới */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Chọn Phòng Mới <span className="text-red-500">*</span>
+                  </label>
+                  {loadingMoveRooms ? (
+                    <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+                      <div className="animate-spin w-4 h-4 border-2 border-orange-500 border-t-transparent rounded-full"></div>
+                      <span>Đang tìm phòng trống...</span>
+                    </div>
+                  ) : moveAvailableRooms.length > 0 ? (
+                    <select
+                      value={selectedMoveRoom?.id || ""}
+                      onChange={(e) => {
+                        const roomId = e.target.value;
+                        console.log("[MoveModal] Selected roomId from dropdown:", roomId);
+                        const room = moveAvailableRooms.find(r => {
+                          const rId = r.id?.toString();
+                          const match = rId === roomId;
+                          console.log("[MoveModal] Comparing:", { rId, roomId, match, room: r });
+                          return match;
+                        });
+                        console.log("[MoveModal] Found room:", room);
+                        setSelectedMoveRoom(room || null);
+                      }}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                    >
+                      <option value="">-- Chọn phòng mới --</option>
+                      {moveAvailableRooms.map((room) => (
+                        <option key={room.id} value={room.id}>
+                          {room.name || room.facilityName} - Sức chứa: {room.capacity || "N/A"} người
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="text-sm text-gray-500 py-2">
+                      Không tìm thấy phòng trống trong khung giờ này.
+                    </div>
+                  )}
+                </div>
+
+                {/* Lý do chuyển */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Lý do chuyển <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={moveReason}
+                    onChange={(e) => setMoveReason(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    placeholder="Nhập lý do chuyển phòng..."
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="sticky bottom-0 bg-white border-t pt-4 px-6 pb-6 flex justify-end gap-3">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setShowMoveModal(false);
+                    setSelectedRequest(null);
+                    setSelectedMoveRoom(null);
+                    setMoveReason("");
+                    setMoveAvailableRooms([]);
+                  }}
+                  disabled={moving}
+                >
+                  Hủy
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={confirmMove}
+                  disabled={moving || !selectedMoveRoom?.id || !moveReason.trim()}
+                >
+                  {moving ? "Đang xử lý..." : "Lưu"}
                 </Button>
               </div>
             </Card>

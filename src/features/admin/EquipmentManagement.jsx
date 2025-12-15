@@ -19,8 +19,10 @@ export default function EquipmentManagement() {
   const [equipmentHistory, setEquipmentHistory] = useState([]);
   const [detailTab, setDetailTab] = useState("info");
   const [editingEquipment, setEditingEquipment] = useState(null);
+  const [equipmentTypes, setEquipmentTypes] = useState([]);
   const [formData, setFormData] = useState({
     name: "",
+    typeId: "",
     roomId: "",
     quantity: "",
     status: "available",
@@ -67,23 +69,63 @@ export default function EquipmentManagement() {
 
       console.log("[EquipmentManagement.loadData] Loading data for campusId:", campusId);
 
+      // Load equipment types
+      let typesData = [];
+      try {
+        typesData = await api.getEquipmentTypes();
+        console.log("[EquipmentManagement.loadData] Equipment types:", typesData?.length || 0);
+      } catch (error) {
+        console.warn("[EquipmentManagement.loadData] Lỗi tải equipment types:", error);
+      }
+
       // Facility Admin chỉ xem equipment và rooms của campus mình
-      // Note: getAllEquipment API có thể chưa có, nên catch error và trả về empty array
-      const [equipmentData, roomsData] = await Promise.all([
-        api.getAllEquipment ? api.getAllEquipment(campusId).catch(err => {
-          console.warn("[EquipmentManagement.loadData] Lỗi tải thiết bị (API chưa có):", err);
-          return []; // Trả về mảng rỗng nếu API chưa có
-        }) : Promise.resolve([]), // Nếu API không tồn tại, trả về empty array
-        api.getRooms({ campusId, includeInactive: true, allStatuses: true }),
-      ]);
+      // Lưu ý: Backend chưa có GET /equipment endpoint, nên chỉ load rooms
+      // Equipment sẽ được lấy từ facility detail khi cần
+      const roomsData = await api.getRooms({ campusId, includeInactive: true, allStatuses: true });
       
       console.log("[EquipmentManagement.loadData] Received data:", {
-        equipmentCount: equipmentData?.length || 0,
         roomsCount: roomsData?.length || 0
       });
       
-      setEquipment(equipmentData || []);
+      // Lấy equipment từ mỗi room (từ facility detail)
+      let finalEquipment = [];
+      if (roomsData && roomsData.length > 0) {
+        console.log("[EquipmentManagement.loadData] Lấy equipment từ facility detail của từng room...");
+        
+        // Lấy equipment từ facility detail của từng room
+        const equipmentPromises = roomsData.map(async (room) => {
+          try {
+            const facilityDetail = await api.getFacilityDetail(room.id);
+            if (facilityDetail.equipment && Array.isArray(facilityDetail.equipment) && facilityDetail.equipment.length > 0) {
+              return facilityDetail.equipment.map(eq => {
+                // Equipment có thể là string (name) hoặc object
+                const eqObj = typeof eq === 'string' ? { name: eq } : eq;
+                return {
+                  ...eqObj,
+                  roomId: room.id,
+                  roomName: room.name,
+                  id: eqObj.id || `${room.id}-${eqObj.name || Math.random()}`,
+                  name: eqObj.name || eq,
+                  quantity: eqObj.quantity || 1,
+                  status: eqObj.status || 'available',
+                };
+              });
+            }
+            return [];
+          } catch (error) {
+            console.warn(`[EquipmentManagement.loadData] Lỗi lấy detail cho room ${room.id}:`, error);
+            return [];
+          }
+        });
+        
+        const equipmentArrays = await Promise.all(equipmentPromises);
+        finalEquipment = equipmentArrays.flat();
+        console.log("[EquipmentManagement.loadData] Equipment từ rooms:", finalEquipment.length);
+      }
+      
+      setEquipment(finalEquipment);
       setRooms(roomsData || []);
+      setEquipmentTypes(typesData || []);
     } catch (error) {
       console.error("[EquipmentManagement.loadData] Lỗi tải dữ liệu:", error);
       setEquipment([]);
@@ -97,6 +139,7 @@ export default function EquipmentManagement() {
     setEditingEquipment(null);
     setFormData({
       name: "",
+      typeId: "",
       roomId: "",
       quantity: "",
       status: "available",
@@ -120,10 +163,11 @@ export default function EquipmentManagement() {
   const handleEdit = (item) => {
     setEditingEquipment(item);
     setFormData({
-      name: item.name,
+      name: item.name || "",
+      typeId: item.typeId?.toString() || item.equipmentTypeId?.toString() || "",
       roomId: item.roomId?.toString() || "",
-      quantity: item.quantity.toString(),
-      status: item.status,
+      quantity: item.quantity?.toString() || "1",
+      status: item.status || "available",
       description: item.description || "",
     });
     setShowModal(true);
@@ -144,16 +188,23 @@ export default function EquipmentManagement() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      // Validation: Phòng là bắt buộc khi tạo mới
+      if (!editingEquipment && !formData.roomId) {
+        alert("Vui lòng chọn phòng để thêm thiết bị!");
+        return;
+      }
+
       const submitData = {
         ...formData,
         roomId: formData.roomId ? parseInt(formData.roomId) : null,
-        quantity: parseInt(formData.quantity),
+        quantity: parseInt(formData.quantity) || 1,
       };
 
       if (editingEquipment) {
         await api.updateEquipment(editingEquipment.id, submitData);
         alert("Cập nhật thiết bị thành công!");
       } else {
+        console.log('[EquipmentManagement.handleSubmit] Creating equipment with data:', submitData);
         await api.createEquipment(submitData);
         alert("Tạo thiết bị thành công!");
       }
@@ -161,7 +212,9 @@ export default function EquipmentManagement() {
       setShowModal(false);
       await loadData();
     } catch (error) {
-      alert(editingEquipment ? "Lỗi khi cập nhật thiết bị!" : "Lỗi khi tạo thiết bị!");
+      console.error('[EquipmentManagement.handleSubmit] Error:', error);
+      const errorMessage = error.message || (editingEquipment ? "Lỗi khi cập nhật thiết bị!" : "Lỗi khi tạo thiết bị!");
+      alert(errorMessage);
     }
   };
 
@@ -308,11 +361,29 @@ export default function EquipmentManagement() {
               <div className="space-y-4 overflow-y-auto flex-1 pr-2">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Tên thiết bị *
+                  Loại thiết bị *
+                </label>
+                <select
+                  required
+                  value={formData.typeId}
+                  onChange={(e) => setFormData({ ...formData, typeId: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                >
+                  <option value="">-- Chọn loại thiết bị --</option>
+                  {equipmentTypes.map((type) => (
+                    <option key={type.id} value={type.id}>
+                      {type.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Tên thiết bị (tùy chọn)
                 </label>
                 <input
                   type="text"
-                  required
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
@@ -323,9 +394,10 @@ export default function EquipmentManagement() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Phòng (tùy chọn)
+                    Phòng {!editingEquipment && '*'}
                   </label>
                   <select
+                    required={!editingEquipment}
                     value={formData.roomId}
                     onChange={(e) => setFormData({ ...formData, roomId: e.target.value })}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"

@@ -213,13 +213,23 @@ export default function RoomManagement() {
       }
 
       // Tạo payload đúng format cho backend
+      // Map status từ frontend (lowercase) sang backend (uppercase)
+      let status = "ACTIVE"; // default
+      if (formData.status === "active") {
+        status = "ACTIVE";
+      } else if (formData.status === "maintenance") {
+        status = "MAINTENANCE";
+      } else if (formData.status === "inactive") {
+        status = "INACTIVE";
+      }
+
       const submitData = {
         name: formData.name,
         description: formData.description || "",
         campusId: campusId,
         typeId: typeId,
         capacity: parseInt(formData.capacity) || 0,
-        status: formData.status === "active" ? "ACTIVE" : "INACTIVE",
+        status: status,
       };
 
       console.log('[handleSubmit] Submitting data:', submitData);
