@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
+import api from "../../services/api";
 
 import Card from "../../components/ui/Card";
 import Button from "../../components/ui/Button";
@@ -68,10 +70,10 @@ export default function RoomSearch() {
   const campuses = api.getCampuses();
 
   const filteredRooms = useMemo(() => {
-    const k = keyword.trim().toLowerCase();
+    const k = searchQuery.trim().toLowerCase();
     if (!k) return rooms;
     return rooms.filter((r) => (r?.name || "").toLowerCase().includes(k));
-  }, [rooms, keyword]);
+  }, [rooms, searchQuery]);
 
   const campusLabel = user?.campusName || `Campus #${user?.campusId ?? ""}`;
 

@@ -8,8 +8,10 @@ import {
   Clock,
   Sparkles,
   Home, // ✅ thêm icon cho “Danh sách phòng”
+  Shield,
+  Globe,
+  Users,
 } from "lucide-react";
-import { Calendar, LayoutDashboard, History, Shield, Globe, CheckSquare, Users } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../context/AuthContext";
@@ -21,9 +23,8 @@ export default function Sidebar({ isOpen }) {
   const role = user?.role; // IN HOA: STUDENT | LECTURER | FACILITY_ADMIN | SECURITY | CLUB_LEADER (nếu có)
 
   // ✅ Routes mới (thêm /booking/facilities)
-  const STUDENT_LECTURER_MENU = [
   // STUDENT & CLUB LEADER MENU (Club Leader có thêm quyền nhưng menu giống Student)
-  const STUDENT_MENU = [
+  const STUDENT_LECTURER_MENU = [
     { icon: LayoutDashboard, label: "Trang chủ", path: "/dashboard" },
     { icon: Home, label: "Danh sách phòng", path: "/booking/facilities" }, // ✅ NEW
     { icon: Calendar, label: "Tìm phòng", path: "/booking/search" },
@@ -45,17 +46,6 @@ export default function Sidebar({ isOpen }) {
     { icon: Calendar, label: "Lịch hôm nay", path: "/security/schedule" },
   ];
 
-  let menuItems = STUDENT_LECTURER_MENU;
-
-  if (role === "FACILITY_ADMIN") {
-    menuItems = FACILITY_ADMIN_MENU;
-  } else if (role === "SECURITY") {
-    menuItems = SECURITY_MENU;
-  } else if (role === "CLUB_LEADER") {
-    menuItems = [...STUDENT_LECTURER_MENU, ...CLUB_LEADER_EXTRA];
-  } else {
-    menuItems = STUDENT_LECTURER_MENU;
-  }
   // FACILITY ADMIN MENU (Nhân viên quản lý phòng)
   const FACILITY_ADMIN_MENU = [
     { icon: Globe, label: "Toàn hệ thống", path: "/admin-facility" },
@@ -63,9 +53,19 @@ export default function Sidebar({ isOpen }) {
   ];
 
   // Xác định menu dựa trên role
-  let menuItems = STUDENT_MENU;
-  if (user?.role === 'campus_admin') menuItems = STAFF_MENU;
-  if (user?.role === 'facility_admin') menuItems = FACILITY_ADMIN_MENU;
+  let menuItems = STUDENT_LECTURER_MENU;
+
+  if (role === "FACILITY_ADMIN" || user?.role === 'facility_admin') {
+    menuItems = FACILITY_ADMIN_MENU;
+  } else if (role === "SECURITY") {
+    menuItems = SECURITY_MENU;
+  } else if (role === "CLUB_LEADER") {
+    menuItems = [...STUDENT_LECTURER_MENU, ...CLUB_LEADER_EXTRA];
+  } else if (role === "CAMPUS_ADMIN" || user?.role === 'campus_admin') {
+    menuItems = STAFF_MENU;
+  } else {
+    menuItems = STUDENT_LECTURER_MENU;
+  }
 
   const isActivePath = (itemPath) => {
     if (itemPath === "/dashboard") return location.pathname === "/dashboard";

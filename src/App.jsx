@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Outlet, Navigate, useLocation } from "react-router-dom";
 import { useState } from "react";
-import { AuthProvider } from "./context/AuthContext";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import { cn } from "./lib/utils";
 
 import Header from "./components/layout/Header";
