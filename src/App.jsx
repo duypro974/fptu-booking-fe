@@ -24,9 +24,9 @@ import ClubSuggestions from "./features/booking/ClubSuggestions";
 
 // Facility Admin
 import ApprovalList from "./features/admin/ApprovalList";
-import FacilityAdminDashboard from "./features/admin/FacilityAdminDashboard";
-import ResourceManagement from "./features/admin/ResourceManagement";
-import Statistics from "./features/admin/Statistics";
+import RoomManagement from "./features/admin/RoomManagement";
+import EquipmentManagement from "./features/admin/EquipmentManagement";
+import ClubManagement from "./features/admin/ClubManagement";
 import HistoryLog from "./features/admin/HistoryLog";
 
 // // Security
@@ -114,11 +114,16 @@ function App() {
 
               {/* ===== Part 2: STUDENT & LECTURER (+ optional CLUB_LEADER) ===== */}
               <Route element={<ProtectedRoute roles={["STUDENT", "LECTURER", "CLUB_LEADER"]} />}>
+                <Route index element={<Navigate to="/dashboard" replace />} />
                 <Route path="dashboard" element={<DashboardPage />} />
+                {/* New routes (Part 2 & 3) */}
                 <Route path="booking/facilities" element={<FacilityCatalog />} />
                 <Route path="booking/search" element={<RoomSearch />} />
                 <Route path="booking/create" element={<BookingForm />} />
                 <Route path="booking/my" element={<MyBookings />} />
+                {/* Backward compatible routes */}
+                <Route path="booking" element={<RoomSearch />} />
+                <Route path="history" element={<MyBookings />} />
 
                 {/* ===== Part 3: CLUB LEADER only (MW3) ===== */}
                 <Route element={<ProtectedRoute roles={["CLUB_LEADER"]} />}>
@@ -126,36 +131,28 @@ function App() {
                 </Route>
               </Route>
 
+              {/* ===== CAMPUS ADMIN ===== */}
+              <Route element={<ProtectedRoute roles={["CAMPUS_ADMIN"]} />}>
+                <Route path="admin-campus" element={<DashboardPage />} />
+                <Route path="admin-campus/approvals" element={<ApprovalList />} />
+              </Route>
+
               {/* ===== FACILITY ADMIN ===== */}
               <Route element={<ProtectedRoute roles={["FACILITY_ADMIN"]} />}>
-                <Route path="admin-facility" element={<FacilityAdminDashboard />} />
-                <Route path="admin-facility/resources" element={<ResourceManagement />} />
+                <Route path="admin-facility" element={<Navigate to="/admin-facility/approvals" replace />} />
                 <Route path="admin-facility/approvals" element={<ApprovalList />} />
-                <Route path="admin-facility/statistics" element={<Statistics />} />
+                <Route path="admin-facility/rooms" element={<RoomManagement />} />
+                <Route path="admin-facility/equipment" element={<EquipmentManagement />} />
+                <Route path="admin-facility/clubs" element={<ClubManagement />} />
                 <Route path="admin-facility/history" element={<HistoryLog />} />
               </Route>
 
-              ===== SECURITY =====
+              {/* ===== SECURITY ===== */}
               {/* <Route element={<ProtectedRoute roles={["SECURITY"]} />}>
                 <Route path="security/checkin" element={<CheckInScanner />} />
                 <Route path="security/schedule" element={<DailySchedule />} />
               </Route> */}
             </Route>
-            {/* STUDENT & LECTURER & CLUB LEADER */}
-            <Route index element={<Navigate to="/dashboard" />} />
-            <Route path="dashboard" element={<DashboardPage />} />
-            <Route path="booking" element={<RoomSearch />} />
-            <Route path="history" element={<MyBookings />} />
-            
-            {/* CAMPUS ADMIN */}
-            <Route path="admin-campus" element={<DashboardPage />} />
-            <Route path="admin-campus/approvals" element={<ApprovalList />} />
-
-            {/* FACILITY ADMIN */}
-            <Route path="admin-facility" element={<FacilityAdminDashboard />} />
-            <Route path="admin-facility/rooms" element={<ResourceManagement />} />
-            <Route path="admin-facility/statistics" element={<Statistics />} />
-            <Route path="admin-facility/history" element={<HistoryLog />} />
           </Route>
 
           <Route path="*" element={<NotFoundPage />} />

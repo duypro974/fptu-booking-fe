@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Plus, Edit2, Trash2, Search, Users, UserPlus, Building2, Eye, History } from "lucide-react";
 import { api } from "../../services/api";
+import { addClubPriority, removeClubPriority } from "../../services/clubService";
 import { useAuth } from "../../context/AuthContext";
 import Button from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
@@ -27,32 +28,224 @@ export default function ClubManagement() {
   });
 
   useEffect(() => {
-    if (user?.campus) {
+    if (user?.campus || user?.campusId) {
       loadData();
     }
   }, [user]);
 
   const loadData = async () => {
-    if (!user?.campus) return;
     setLoading(true);
+    console.log('[ClubManagement.loadData] Starting, user:', user);
+    
     try {
+      // Convert user.campus hoặc user.campusId sang campusId
+      let campusId = null;
+      
+      if (user?.campusId) {
+        campusId = user.campusId;
+      } else if (typeof user?.campus === 'number') {
+        campusId = user.campus;
+      } else if (typeof user?.campus === 'string') {
+        const campusMap = { hcm: 2, hn: 1, dn: 3, ct: 4, qn: 5 };
+        campusId = campusMap[user.campus.toLowerCase()] || null;
+      }
+
+      // Fallback: nếu không có campusId, dùng campusId = 2 (HCM) làm mặc định
+      if (!campusId) {
+        console.warn('[ClubManagement.loadData] Không thể xác định campusId, dùng mặc định campusId = 2 (HCM)');
+        campusId = 2; // Default to HCM
+      }
+
+      console.log('[ClubManagement.loadData] Loading data for campus:', {
+        userCampus: user?.campus,
+        userCampusId: user?.campusId,
+        campusId,
+        userId: user?.id
+      });
+
       // Facility Admin chỉ xem clubs và rooms của campus mình
       const [clubsData, roomsData] = await Promise.all([
-        api.getAllClubs(user.campus),
-        api.getAllRooms(user.campus),
+        api.getClubs(campusId),
+        api.getRooms({ campusId }),
       ]);
-      setClubs(clubsData);
-      setRooms(roomsData);
+      
+      console.log('[ClubManagement.loadData] Data loaded:', {
+        clubsCount: clubsData?.length || 0,
+        roomsCount: roomsData?.length || 0,
+        clubsData: clubsData // Log toàn bộ để debug
+      });
+      
+      // Đảm bảo clubsData là array hợp lệ
+      if (!Array.isArray(clubsData)) {
+        console.error('[ClubManagement.loadData] clubsData is not an array:', clubsData);
+        setClubs([]);
+        setRooms(roomsData || []);
+        setLoading(false);
+        return;
+      }
+
+      // Load thêm thông tin leader và priority rooms cho mỗi club
+      // Dùng Promise.allSettled thay vì Promise.all để không bị fail toàn bộ nếu 1 club lỗi
+      const clubsWithDetailsPromises = (clubsData || []).map(async (club, index) => {
+        // Xử lý an toàn: nếu club là null/undefined, tạo object mặc định
+        if (!club || typeof club !== 'object') {
+          console.warn('[ClubManagement.loadData] Club at index', index, 'is null/undefined, skipping');
+          return null;
+        }
+
+        try {
+          // Load priority rooms
+          let priorityRoomNames = [];
+          try {
+            // Chỉ gọi API nếu club có id hợp lệ
+            if (club.id !== null && club.id !== undefined) {
+              const priorities = await api.getClubPriorityRooms(club.id);
+              console.log('[ClubManagement.loadData] Priority rooms for club', club.id, ':', priorities);
+              console.log('[ClubManagement.loadData] Priority rooms count:', priorities?.length || 0);
+              
+              // API getClubPriorityRooms trả về array với format: {id: facilityId, name: facility.name, isPriority: true}
+              if (Array.isArray(priorities) && priorities.length > 0) {
+                console.log('[ClubManagement.loadData] Processing', priorities.length, 'priorities for club', club.id);
+                
+                // Đơn giản hóa: lấy name trực tiếp từ priorities, không filter gì cả
+                priorityRoomNames = priorities
+                  .map((p) => {
+                    // Xử lý an toàn cho null/undefined
+                    if (!p || typeof p !== 'object') return null;
+                    
+                    // Ưu tiên: p.name (từ API mapping) > p.facility?.name > tìm trong roomsData
+                    if (p.name) {
+                      return p.name;
+                    }
+                    if (p.facility?.name) {
+                      return p.facility.name;
+                    }
+                    // Tìm trong roomsData
+                    const facilityId = p.facilityId || p.id;
+                    if (facilityId && roomsData && roomsData.length > 0) {
+                      const room = roomsData.find(r => {
+                        return r && (r.id === facilityId || r.id === parseInt(facilityId) || r.id?.toString() === facilityId?.toString());
+                      });
+                      if (room) {
+                        return room.name || room.facilityName || null;
+                      }
+                    }
+                    // Fallback
+                    return p.facilityName || p.facility?.facilityName || null;
+                  })
+                  .filter(name => name !== null && name !== undefined && name !== ''); // Chỉ filter null/undefined/empty string
+                
+                console.log('[ClubManagement.loadData] Mapped', priorityRoomNames.length, 'priority room names from', priorities.length, 'priorities');
+                console.log('[ClubManagement.loadData] Priority room names:', priorityRoomNames);
+              }
+            }
+          } catch (error) {
+            console.error('[ClubManagement.loadData] Error loading priority rooms for club', club.id, ':', error);
+            // Nếu API lỗi, thử lấy từ club object nếu có
+            if (club.priorityRoomNames && Array.isArray(club.priorityRoomNames)) {
+              priorityRoomNames = club.priorityRoomNames;
+              console.log('[ClubManagement.loadData] Using fallback priority room names from club object:', priorityRoomNames);
+            }
+            // Nếu không có, giữ mảng rỗng (đã set default ở trên)
+          }
+
+          // Tính leader count - Xử lý an toàn cho null/undefined
+          let leaderCount = 0;
+          if (club.leaderEmail) {
+            leaderCount = 1;
+          } else if (club.leaderId !== null && club.leaderId !== undefined) {
+            leaderCount = 1;
+          } else if (club.leader) {
+            leaderCount = 1;
+          } else if (Array.isArray(club.leaders) && club.leaders.length > 0) {
+            leaderCount = club.leaders.length;
+          }
+
+          // QUAN TRỌNG: Dùng spread operator để giữ lại TOÀN BỘ dữ liệu gốc từ API
+          // Sau đó mới thêm/bổ sung các trường mới (priorityRoomNames, leaderCount)
+          // Đảm bảo tất cả trường gốc được giữ nguyên, kể cả khi null/undefined
+          return {
+            ...club, // Giữ nguyên TẤT CẢ dữ liệu gốc: id, name, code, description, campus, campusId, leaderEmail, leaderId, leader, leaders, etc.
+            priorityRoomNames: priorityRoomNames || [], // Bổ sung thêm, đảm bảo luôn là array
+            leaderCount: leaderCount || 0 // Bổ sung thêm, đảm bảo luôn là number
+          };
+        } catch (error) {
+          console.error('[ClubManagement.loadData] Error loading details for club', club?.id || index, ':', error);
+          // Vẫn giữ nguyên dữ liệu gốc, chỉ set default cho các trường mới
+          // Đảm bảo luôn trả về một object hợp lệ
+          return {
+            ...club, // Giữ nguyên TẤT CẢ dữ liệu gốc
+            priorityRoomNames: [], // Default
+            leaderCount: 0 // Default
+          };
+        }
+      });
+      
+      // Dùng Promise.allSettled để không bị fail toàn bộ nếu 1 club lỗi
+      const clubsWithDetailsResults = await Promise.allSettled(clubsWithDetailsPromises);
+      const clubsWithDetails = clubsWithDetailsResults
+        .map((result, index) => {
+          if (result.status === 'fulfilled') {
+            // Chỉ filter null thực sự (không filter falsy values như 0, false, empty string)
+            if (result.value === null || result.value === undefined) {
+              console.warn('[ClubManagement.loadData] Club at index', index, 'returned null/undefined, using original club data');
+              // Nếu club bị null, vẫn trả về club gốc với default values
+              const originalClub = clubsData?.[index];
+              if (originalClub) {
+                return {
+                  ...originalClub,
+                  priorityRoomNames: [],
+                  leaderCount: 0
+                };
+              }
+              return null;
+            }
+            return result.value;
+          } else {
+            console.error('[ClubManagement.loadData] Club at index', index, 'failed:', result.reason);
+            // Fallback: trả về club gốc với default values
+            const originalClub = clubsData?.[index];
+            if (originalClub) {
+              return {
+                ...originalClub,
+                priorityRoomNames: [],
+                leaderCount: 0
+              };
+            }
+            return null;
+          }
+        })
+        .filter(club => club !== null && club !== undefined); // CHỈ filter null/undefined thực sự, KHÔNG filter falsy values
+
+      console.log('[ClubManagement.loadData] Clubs with details:', clubsWithDetails);
+      console.log('[ClubManagement.loadData] Total clubs from API:', clubsData?.length || 0);
+      console.log('[ClubManagement.loadData] Total clubs after processing:', clubsWithDetails.length);
+      console.log('[ClubManagement.loadData] Clubs list:', clubsWithDetails.map(c => ({ id: c?.id, name: c?.name })));
+      
+      // CẢNH BÁO nếu số lượng clubs bị giảm
+      if (clubsWithDetails.length < (clubsData?.length || 0)) {
+        console.warn('[ClubManagement.loadData] ⚠️ WARNING: Some clubs were lost during processing!', {
+          originalCount: clubsData?.length || 0,
+          processedCount: clubsWithDetails.length,
+          lost: (clubsData?.length || 0) - clubsWithDetails.length
+        });
+      }
+
+      setClubs(clubsWithDetails);
+      setRooms(roomsData || []);
       
       // Nếu đang xem chi tiết một club, cập nhật lại viewingClub
       if (viewingClub) {
-        const updatedClub = clubsData.find(c => c.id === viewingClub.id);
+        const updatedClub = clubsData?.find(c => c.id === viewingClub.id);
         if (updatedClub) {
           setViewingClub(updatedClub);
         }
       }
     } catch (error) {
-      console.error("Lỗi tải dữ liệu:", error);
+      console.error("[ClubManagement.loadData] Lỗi tải dữ liệu:", error);
+      // Set empty arrays để tránh crash
+      setClubs([]);
+      setRooms([]);
     } finally {
       setLoading(false);
     }
@@ -68,12 +261,31 @@ export default function ClubManagement() {
     setShowModal(true);
   };
 
-  const handleEdit = (club) => {
+  const handleEdit = async (club) => {
     setEditingClub(club);
+    
+    // Load priority rooms của club
+    let priorityRoomIds = [];
+    try {
+      const priorities = await api.getClubPriorityRooms(club.id);
+      console.log('[handleEdit] Loaded priorities for club', club.id, ':', priorities);
+      // Lấy ID từ priorities - có thể là p.id hoặc p.facilityId
+      priorityRoomIds = priorities.map(p => {
+        const id = p.facilityId || p.id;
+        console.log('[handleEdit] Priority room ID:', id, 'from priority:', p);
+        return id;
+      }).filter(Boolean);
+      console.log('[handleEdit] Priority room IDs:', priorityRoomIds);
+    } catch (error) {
+      console.error('[handleEdit] Error loading priority rooms:', error);
+      // Fallback về priorityRoomIds từ club object nếu có
+      priorityRoomIds = club.priorityRoomIds || [];
+    }
+    
     setFormData({
       name: club.name,
       description: club.description || "",
-      priorityRoomIds: club.priorityRoomIds || [],
+      priorityRoomIds: priorityRoomIds,
     });
     setShowModal(true);
   };
@@ -103,12 +315,96 @@ export default function ClubManagement() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      console.log('[handleSubmit] formData:', formData);
+      // Convert user.campus sang campusId
+      let campusId = null;
+      if (typeof user?.campus === 'number') {
+        campusId = user.campus;
+      } else if (typeof user?.campus === 'string') {
+        const campusMap = { hcm: 2, hn: 1, dn: 3, ct: 4, qn: 5 };
+        campusId = campusMap[user.campus.toLowerCase()] || null;
+      } else if (user?.campusId) {
+        campusId = user.campusId;
+      }
+
+      if (!campusId) {
+        alert("Không thể xác định campus. Vui lòng thử lại.");
+        return;
+      }
+
+      // Tạo payload với campusId
+      const payload = {
+        name: formData.name,
+        description: formData.description || "",
+        campusId: campusId,
+        // priorityRoomIds sẽ được xử lý riêng sau khi tạo club
+      };
+
+      console.log('[handleSubmit] Payload:', payload);
+
       if (editingClub) {
-        await api.updateClub(editingClub.id, formData);
+        await api.updateClub(editingClub.id, payload);
+        
+        // Cập nhật priority rooms cho club đã tồn tại
+        try {
+          // Lấy danh sách priority rooms hiện tại
+          const currentPriorities = await api.getClubPriorityRooms(editingClub.id);
+          console.log('[handleSubmit] Current priorities from API:', currentPriorities);
+          
+          // Lấy facilityId từ priorities - ưu tiên p.facilityId, sau đó p.id
+          const currentPriorityIds = currentPriorities
+            .map(p => {
+              const id = p.facilityId || p.id;
+              // Convert sang number để so sánh
+              return typeof id === 'string' ? parseInt(id, 10) : id;
+            })
+            .filter(id => id !== null && id !== undefined && !isNaN(id));
+          
+          // Normalize formData.priorityRoomIds
+          const newPriorityIds = (formData.priorityRoomIds || [])
+            .map(id => typeof id === 'string' ? parseInt(id, 10) : id)
+            .filter(id => id !== null && id !== undefined && !isNaN(id));
+          
+          console.log('[handleSubmit] Current priority IDs (normalized):', currentPriorityIds);
+          console.log('[handleSubmit] New priority IDs (normalized):', newPriorityIds);
+          
+          // Thêm các priority rooms mới
+          for (const roomId of newPriorityIds) {
+            if (!currentPriorityIds.includes(roomId)) {
+              console.log('[handleSubmit] Adding priority room:', roomId);
+              await addClubPriority(editingClub.id, { facilityId: roomId });
+            }
+          }
+          
+          // Xóa các priority rooms không còn trong danh sách
+          for (const currentId of currentPriorityIds) {
+            if (!newPriorityIds.includes(currentId)) {
+              console.log('[handleSubmit] Removing priority room:', currentId);
+              await removeClubPriority(editingClub.id, currentId);
+            }
+          }
+          
+          console.log('[handleSubmit] Priority rooms update completed');
+        } catch (error) {
+          console.error('[handleSubmit] Error updating priority rooms:', error);
+          alert("Cập nhật CLB thành công nhưng có lỗi khi cập nhật phòng ưu tiên. Vui lòng thử lại.");
+        }
+        
         alert("Cập nhật CLB thành công!");
       } else {
-        await api.createClub(formData);
+        const newClub = await api.createClub(payload);
+        
+        // Thêm priority rooms sau khi tạo club
+        if (formData.priorityRoomIds && formData.priorityRoomIds.length > 0 && newClub?.id) {
+          try {
+            for (const roomId of formData.priorityRoomIds) {
+              await addClubPriority(newClub.id, { facilityId: roomId });
+            }
+          } catch (error) {
+            console.error('[handleSubmit] Error adding priority rooms:', error);
+            // Không throw error, chỉ log để không block việc tạo club
+          }
+        }
+        
         alert("Tạo CLB thành công!");
       }
       
@@ -144,8 +440,13 @@ export default function ClubManagement() {
   };
 
   const filteredClubs = clubs.filter((club) =>
-    club.name.toLowerCase().includes(searchTerm.toLowerCase())
+    club.name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
+  
+  // Log để debug
+  console.log('[ClubManagement] Total clubs in state:', clubs.length);
+  console.log('[ClubManagement] Filtered clubs:', filteredClubs.length);
+  console.log('[ClubManagement] Search term:', searchTerm);
 
   return (
     <div className="space-y-6">

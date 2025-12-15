@@ -2,8 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
-import api from "../../services/api";
-
+import { api } from "../../services/api";
 import Card from "../../components/ui/Card";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
@@ -16,8 +15,6 @@ import {
 
 export default function RoomSearch() {
   const { user } = useAuth();
-  const navigate = useNavigate();
-
   const [rooms, setRooms] = useState([]);
   const [facilityTypes, setFacilityTypes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -511,9 +508,9 @@ function RoomDetailModal({ room, onClose, selectedDate }) {
             );
           })()}
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
-
-          <button
-            onClick={onClose}
+          
+          <button 
+            onClick={onClose} 
             className="absolute top-4 right-4 bg-black/30 hover:bg-black/60 text-white p-2 rounded-full backdrop-blur-md transition-all border border-white/20"
           >
             <X className="w-5 h-5" />
@@ -528,7 +525,7 @@ function RoomDetailModal({ room, onClose, selectedDate }) {
           </div>
         </div>
 
-        {/* Body */}
+        {/* Body: Nội dung cuộn được */}
         <div className="p-6 md:p-8 overflow-y-auto custom-scrollbar">
           
           {/* Thông số chính */}
@@ -718,6 +715,7 @@ function RoomDetailModal({ room, onClose, selectedDate }) {
             )}
           </div>
 
+          {/* Mô tả */}
           <div>
             <h3 className="font-bold text-gray-900 mb-2 flex items-center gap-2">
               <span className="w-1 h-5 bg-orange-500 rounded-full"></span>

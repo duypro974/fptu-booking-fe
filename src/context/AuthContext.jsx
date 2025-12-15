@@ -36,20 +36,20 @@ export function AuthProvider({ children }) {
 
   // Login theo swagger: POST /auth/login
   // campusId: number (1,2,3...) theo backend
- const login = async (email, password, campusId) => {
-  const data = await authService.login({ email, password, campusId });
-  const backendUser = data?.user || null;
-  const token = data?.token;
+  const login = async (email, password, campusId) => {
+    const data = await authService.login({ email, password, campusId });
+    const backendUser = data?.user || null;
+    const token = data?.token;
 
-  if (token) localStorage.setItem("access_token", token);
+    if (token) localStorage.setItem("access_token", token);
 
-  if (backendUser) {
-    setUser(backendUser);
-    localStorage.setItem("fptu_user", JSON.stringify(backendUser));
-  }
+    if (backendUser) {
+      setUser(backendUser);
+      localStorage.setItem("fptu_user", JSON.stringify(backendUser));
+    }
 
-  return data;
-};
+    return data;
+  };
 
   // Refresh user từ backend: GET /auth/profile
   const refreshProfile = async () => {

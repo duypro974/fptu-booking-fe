@@ -27,7 +27,21 @@ const CAMPUSES = [
 
 export default function Login() {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const auth = useAuth();
+  const login = auth?.login;
+  
+  // Nếu useAuth trả về undefined, hiển thị lỗi
+  if (!auth || !login) {
+    console.error('[Login] useAuth() returned undefined or missing login function');
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-red-600">Lỗi: AuthContext chưa được khởi tạo đúng</p>
+          <p className="text-gray-500 text-sm mt-2">Vui lòng refresh trang</p>
+        </div>
+      </div>
+    );
+  }
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -41,14 +55,24 @@ export default function Login() {
   const [showTestAccounts, setShowTestAccounts] = useState(false);
 
   const extractErrorMessage = (err) => {
+    console.log('[Login.extractErrorMessage] Error object:', err);
+    
+    // Network error (không kết nối được backend)
+    if (err?.isNetworkError || (!err?.response && err?.message)) {
+      return err.message || "Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.";
+    }
+
     // Nếu AuthContext / axios đã throw new Error("...") thì dùng luôn
-    if (err?.message && !err.message.includes("status code")) return err.message;
+    if (err?.message && !err.message.includes("status code")) {
+      return err.message;
+    }
 
     // Trường hợp axios error chưa được handle: lấy message backend
-    const apiMsg = err?.response?.data?.message;
+    const apiMsg = err?.response?.data?.message || err?.response?.data?.error;
     if (apiMsg) return apiMsg;
 
-    return "Đăng nhập thất bại.";
+    // Fallback
+    return "Đăng nhập thất bại. Vui lòng thử lại.";
   };
 
   const handleLogin = async (e) => {
@@ -214,18 +238,18 @@ export default function Login() {
                 <div
                   className="bg-orange-50 border border-orange-200 rounded-lg p-3 cursor-pointer hover:bg-orange-100 transition-colors"
                   onClick={() => {
-                    setEmail("facility.hcm@fpt.edu.vn");
+                    setEmail("admin.hcm@fpt.edu.vn");
                     setPassword("123456");
                     setCampusId(2);
                   }}
                 >
                   <p className="font-semibold text-orange-900 mb-2">
-                    🏢 Facility Admin
+                    🏢 Facility Admin (HCM) ✅
                   </p>
                   <p className="text-orange-800 mb-1">
                     Email:{" "}
                     <code className="bg-white px-2 py-0.5 rounded text-xs">
-                      facility.hcm@fpt.edu.vn
+                      admin.hcm@fpt.edu.vn
                     </code>
                   </p>
                   <p className="text-orange-700 text-xs">Password: 123456</p>

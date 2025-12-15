@@ -5,6 +5,7 @@ import { useAuth } from "../../context/AuthContext";
 import Button from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
 import Badge from "../../components/ui/Badge";
+import AdminLayout, { AdminHeader, AdminContent } from "../../components/layout/AdminLayout";
 
 export default function RoomManagement() {
   const { user } = useAuth();
@@ -12,6 +13,7 @@ export default function RoomManagement() {
   const [facilityTypes, setFacilityTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all"); // "all", "active", "inactive", "maintenance"
   const [showModal, setShowModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState(null);
@@ -29,10 +31,20 @@ export default function RoomManagement() {
   });
 
   useEffect(() => {
-    if (user?.campus) {
+    console.log("[RoomManagement] useEffect triggered, user:", user);
+    console.log("[RoomManagement] user?.campus:", user?.campus);
+    console.log("[RoomManagement] user?.campusId:", user?.campusId);
+    
+    // Nếu user có campus hoặc campusId, load data
+    if (user?.campus || user?.campusId) {
+      const campus = user.campus || (user.campusId === 1 ? 'hn' : user.campusId === 2 ? 'hcm' : 'hcm');
+      console.log("[RoomManagement] Loading data for campus:", campus);
       loadFacilityTypes();
       loadRooms();
-      setFormData(prev => ({ ...prev, campus: user.campus }));
+      setFormData(prev => ({ ...prev, campus: campus }));
+    } else {
+      console.warn("[RoomManagement] User không có campus hoặc campusId, không thể load data");
+      setLoading(false);
     }
   }, [user]);
 
@@ -63,16 +75,56 @@ export default function RoomManagement() {
   };
 
   const loadRooms = async () => {
-    if (!user?.campus) return;
     setLoading(true);
+    console.log("[RoomManagement.loadRooms] Starting, user:", user);
+    
     try {
-      // Facility Admin chỉ xem phòng của campus mình
-      const data = await api.getAllRooms(user.campus);
-      setRooms(data);
+      // Convert user.campus hoặc user.campusId sang campusId
+      let campusId = null;
+      
+      if (user?.campusId) {
+        campusId = user.campusId;
+      } else if (typeof user?.campus === 'number') {
+        campusId = user.campus;
+      } else if (typeof user?.campus === 'string') {
+        const campusMap = { hcm: 2, hn: 1, dn: 3, ct: 4, qn: 5 };
+        campusId = campusMap[user.campus.toLowerCase()] || null;
+      }
+
+      console.log("[RoomManagement.loadRooms] Loading rooms for campusId:", campusId, "user:", user);
+
+      // Fallback: nếu không có campusId, dùng campusId = 2 (HCM) làm mặc định
+      if (!campusId) {
+        console.warn("[RoomManagement.loadRooms] Không thể xác định campusId, dùng mặc định campusId = 2 (HCM)");
+        campusId = 2; // Default to HCM
+      }
+
+      // Facility Admin chỉ xem phòng của campus mình (bao gồm cả inactive và maintenance)
+      console.log("[RoomManagement.loadRooms] Calling api.getRooms...");
+      const data = await api.getRooms({ 
+        campusId,
+        includeInactive: true,
+        allStatuses: true 
+      });
+      console.log("[RoomManagement.loadRooms] Received data:", data?.length || 0, "rooms");
+      setRooms(data || []);
     } catch (error) {
-      console.error("Lỗi tải danh sách phòng:", error);
+      console.error("[RoomManagement.loadRooms] Lỗi tải danh sách phòng:", error);
+      console.error("[RoomManagement.loadRooms] Error details:", {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+      setRooms([]);
+      // Hiển thị thông báo lỗi cho user
+      if (error.message?.includes('TIMEOUT')) {
+        alert("Request timeout. Vui lòng thử lại sau.");
+      } else if (error.message?.includes('CONNECTION_ERROR')) {
+        alert("Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.");
+      }
     } finally {
       setLoading(false);
+      console.log("[RoomManagement.loadRooms] Loading completed");
     }
   };
 
@@ -135,10 +187,42 @@ export default function RoomManagement() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      // Convert campus string sang campusId number
+      let campusId = null;
+      if (typeof formData.campus === 'number') {
+        campusId = formData.campus;
+      } else if (typeof formData.campus === 'string') {
+        const campusMap = { hcm: 2, hn: 1, dn: 3, ct: 4, qn: 5 };
+        campusId = campusMap[formData.campus.toLowerCase()] || null;
+      } else if (user?.campusId) {
+        campusId = user.campusId;
+      }
+
+      // Tìm typeId từ facilityTypes
+      const selectedType = facilityTypes.find(t => t.name === formData.type || t.id === formData.type);
+      const typeId = selectedType?.id || (typeof formData.type === 'number' ? formData.type : null);
+
+      if (!campusId) {
+        alert("Không thể xác định campus. Vui lòng thử lại.");
+        return;
+      }
+
+      if (!typeId) {
+        alert("Vui lòng chọn loại phòng.");
+        return;
+      }
+
+      // Tạo payload đúng format cho backend
       const submitData = {
-        ...formData,
-        capacity: parseInt(formData.capacity),
+        name: formData.name,
+        description: formData.description || "",
+        campusId: campusId,
+        typeId: typeId,
+        capacity: parseInt(formData.capacity) || 0,
+        status: formData.status === "active" ? "ACTIVE" : "INACTIVE",
       };
+
+      console.log('[handleSubmit] Submitting data:', submitData);
 
       if (editingRoom) {
         await api.updateRoom(editingRoom.id, submitData);
@@ -151,14 +235,21 @@ export default function RoomManagement() {
       setShowModal(false);
       await loadRooms();
     } catch (error) {
-      alert(editingRoom ? "Lỗi khi cập nhật phòng!" : "Lỗi khi tạo phòng!");
+      console.error('[handleSubmit] Error:', error);
+      alert(editingRoom ? `Lỗi khi cập nhật phòng: ${error.message}` : `Lỗi khi tạo phòng: ${error.message}`);
     }
   };
 
-  const filteredRooms = rooms.filter((room) =>
-    room.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    room.type.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredRooms = rooms.filter((room) => {
+    // Filter theo search term
+    const matchesSearch = room.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         room.type.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    // Filter theo status
+    const matchesStatus = statusFilter === "all" || room.status === statusFilter;
+    
+    return matchesSearch && matchesStatus;
+  });
 
   const campuses = api.getCampuses();
   
@@ -190,27 +281,44 @@ export default function RoomManagement() {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Toolbar */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-3 text-gray-400 w-5 h-5" />
-          <input
-            type="text"
-            placeholder="Tìm kiếm phòng..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500"
-          />
+    <AdminLayout>
+      {/* Toolbar - Fixed Header */}
+      <AdminHeader>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="flex flex-1 gap-3">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-3 text-gray-400 w-5 h-5" />
+            <input
+              type="text"
+              placeholder="Tìm kiếm phòng..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500"
+            />
+          </div>
+          
+          {/* Filter theo status */}
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="px-4 py-2 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 text-sm font-medium cursor-pointer"
+          >
+            <option value="all">Tất cả trạng thái</option>
+            <option value="active">Hoạt động</option>
+            <option value="maintenance">Bảo trì</option>
+            <option value="inactive">Ngừng hoạt động</option>
+          </select>
         </div>
         <Button onClick={handleCreate} className="flex items-center gap-2">
           <Plus className="w-5 h-5" />
           Thêm phòng mới
         </Button>
-      </div>
+        </div>
+      </AdminHeader>
 
-      {/* Table */}
-      {loading ? (
+      {/* Content - Scrollable */}
+      <AdminContent>
+        {loading ? (
         <div className="text-center py-20">
           <div className="animate-spin w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full mx-auto mb-4"></div>
           <p className="text-gray-400">Đang tải dữ liệu...</p>
@@ -294,12 +402,18 @@ export default function RoomManagement() {
             </table>
           </div>
         </Card>
-      )}
+        )}
+      </AdminContent>
 
-      {/* Modal Create/Edit */}
+      {/* Modal Create/Edit - Scrollable Overlay */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="max-w-2xl w-full max-h-[90vh] flex flex-col">
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          {/* Overlay */}
+          <div className="fixed inset-0 bg-black/50 transition-opacity" aria-hidden="true" />
+          
+          {/* Modal Container */}
+          <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
+            <Card className="relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-2xl max-h-[90vh] flex flex-col">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold text-gray-900">
                 {editingRoom ? "Chỉnh sửa phòng" : "Thêm phòng mới"}
@@ -426,14 +540,20 @@ export default function RoomManagement() {
                 </Button>
               </div>
             </form>
-          </Card>
+            </Card>
+          </div>
         </div>
       )}
 
-      {/* Detail Modal */}
+      {/* Detail Modal - Scrollable Overlay */}
       {showDetailModal && selectedRoom && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          {/* Overlay */}
+          <div className="fixed inset-0 bg-black/50 transition-opacity" aria-hidden="true" />
+          
+          {/* Modal Container */}
+          <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
+            <Card className="relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-4xl max-h-[90vh] flex flex-col">
             {/* Header */}
             <div className="flex justify-between items-center mb-6 pb-4 border-b">
               <div>
@@ -625,10 +745,11 @@ export default function RoomManagement() {
                 Chỉnh sửa
               </Button>
             </div>
-          </Card>
+            </Card>
+          </div>
         </div>
       )}
-    </div>
+    </AdminLayout>
   );
 }
 
