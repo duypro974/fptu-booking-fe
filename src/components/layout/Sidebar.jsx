@@ -7,6 +7,10 @@ export default function Sidebar({ isOpen }) {
   const location = useLocation();
   const { user } = useAuth();
 
+  const role = user?.role; // IN HOA: STUDENT | LECTURER | FACILITY_ADMIN | SECURITY | CLUB_LEADER (nếu có)
+
+  // ✅ Routes mới (thêm /booking/facilities)
+  const STUDENT_LECTURER_MENU = [
   // STUDENT & CLUB LEADER MENU (Club Leader có thêm quyền nhưng menu giống Student)
   const STUDENT_MENU = [
     { icon: LayoutDashboard, label: "Trang chủ", path: "/dashboard" },
@@ -42,6 +46,37 @@ export default function Sidebar({ isOpen }) {
     console.log('[Sidebar] User role (normalized):', userRole);
     console.log('[Sidebar] Selected menu items:', menuItems.length, menuItems.map(m => m.label));
   }
+  const SECURITY_MENU = [
+    { icon: CheckSquare, label: "Check-in/Out", path: "/security/checkin" },
+    { icon: Calendar, label: "Lịch hôm nay", path: "/security/schedule" },
+  ];
+
+  let menuItems = STUDENT_LECTURER_MENU;
+
+  if (role === "FACILITY_ADMIN") {
+    menuItems = FACILITY_ADMIN_MENU;
+  } else if (role === "SECURITY") {
+    menuItems = SECURITY_MENU;
+  } else if (role === "CLUB_LEADER") {
+    menuItems = [...STUDENT_LECTURER_MENU, ...CLUB_LEADER_EXTRA];
+  } else {
+    menuItems = STUDENT_LECTURER_MENU;
+  }
+  // FACILITY ADMIN MENU (Nhân viên quản lý phòng)
+  const FACILITY_ADMIN_MENU = [
+    { icon: Globe, label: "Toàn hệ thống", path: "/admin-facility" },
+    { icon: Users, label: "Quản lý Tài khoản", path: "/admin-facility/users" },
+  ];
+
+  // Xác định menu dựa trên role
+  let menuItems = STUDENT_MENU;
+  if (user?.role === 'campus_admin') menuItems = STAFF_MENU;
+  if (user?.role === 'facility_admin') menuItems = FACILITY_ADMIN_MENU;
+
+  const isActivePath = (itemPath) => {
+    if (itemPath === "/dashboard") return location.pathname === "/dashboard";
+    return location.pathname === itemPath || location.pathname.startsWith(itemPath + "/");
+  };
 
   return (
     <aside className={cn(

@@ -65,6 +65,14 @@ export default function RoomSearch() {
 
   const campuses = api.getCampuses();
 
+  const filteredRooms = useMemo(() => {
+    const k = keyword.trim().toLowerCase();
+    if (!k) return rooms;
+    return rooms.filter((r) => (r?.name || "").toLowerCase().includes(k));
+  }, [rooms, keyword]);
+
+  const campusLabel = user?.campusName || `Campus #${user?.campusId ?? ""}`;
+
   return (
     <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
       
