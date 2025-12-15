@@ -93,11 +93,16 @@ export default function Login() {
       const data = await login(email, password, campusId);
 
       const role = String(data?.user?.role || "").toUpperCase();
+      console.log('[Login] User role after login:', role);
+      console.log('[Login] User data:', data?.user);
 
       if (role === "FACILITY_ADMIN") {
         navigate("/admin-facility");
       } else if (role === "CAMPUS_ADMIN") {
         navigate("/admin-campus");
+      } else if (role === "SECURITY" || role === "SECURITY_GUARD") {
+        console.log('[Login] Redirecting Security to /security/checkin');
+        navigate("/security/checkin", { replace: true });
       } else {
         navigate("/dashboard");
       }

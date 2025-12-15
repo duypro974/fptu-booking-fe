@@ -29,9 +29,8 @@ import EquipmentManagement from "./features/admin/EquipmentManagement";
 import ClubManagement from "./features/admin/ClubManagement";
 import HistoryLog from "./features/admin/HistoryLog";
 
-// // Security
-// import CheckInScanner from "./features/security/CheckInScanner";
-// import DailySchedule from "./features/security/DailySchedule";
+// Security
+import CheckInScanner from "./features/security/CheckInScanner";
 
 const MainLayout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -52,6 +51,7 @@ const MainLayout = () => {
   // Redirect nếu user đang ở sai route theo role
   const isFacilityAdmin = user?.role === 'facility_admin' || user?.role === 'FACILITY_ADMIN';
   const isStudent = user?.role === 'student' || user?.role === 'STUDENT';
+  const isSecurity = user?.role === 'security' || user?.role === 'SECURITY' || user?.role === 'SECURITY_GUARD';
   
   // Nếu Facility Admin đang ở route Student -> redirect
   if (isFacilityAdmin && (location.pathname === '/dashboard' || location.pathname === '/booking' || location.pathname === '/history')) {
@@ -63,10 +63,17 @@ const MainLayout = () => {
     return <Navigate to="/dashboard" replace />;
   }
 
-  // Kiểm tra nếu đang ở trang Admin thì ẩn Footer
+  // Nếu Security đang ở route khác -> redirect về checkin
+  if (isSecurity && !location.pathname.startsWith('/security')) {
+    return <Navigate to="/security/checkin" replace />;
+  }
+
+  // Kiểm tra nếu đang ở trang Admin hoặc Security thì ẩn Footer
   const isAdminPage = location.pathname.startsWith('/admin') || 
+                      location.pathname.startsWith('/security') ||
                       isFacilityAdmin || 
-                      user?.role === 'campus_admin';
+                      user?.role === 'campus_admin' ||
+                      isSecurity;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-gray-900">
@@ -96,6 +103,26 @@ const MainLayout = () => {
 const ForbiddenPage = () => <div className="text-center pt-20">403 - Forbidden</div>;
 const NotFoundPage = () => <div className="text-center pt-20">404 - Not Found</div>;
 
+// Component để redirect dựa trên role
+const RoleBasedRedirect = () => {
+  const { user } = useAuth();
+  const role = String(user?.role || "").toUpperCase();
+  
+  console.log('[RoleBasedRedirect] User role:', role);
+  console.log('[RoleBasedRedirect] User:', user);
+  
+  if (role === "FACILITY_ADMIN") {
+    return <Navigate to="/admin-facility" replace />;
+  } else if (role === "CAMPUS_ADMIN") {
+    return <Navigate to="/admin-campus" replace />;
+  } else if (role === "SECURITY" || role === "SECURITY_GUARD") {
+    console.log('[RoleBasedRedirect] Redirecting Security to /security/checkin');
+    return <Navigate to="/security/checkin" replace />;
+  } else {
+    return <Navigate to="/dashboard" replace />;
+  }
+};
+
 function App() {
   return (
     <AuthProvider>
@@ -109,8 +136,13 @@ function App() {
           <Route element={<ProtectedRoute />}>
             <Route path="/" element={<MainLayout />}>
               {/* Common */}
-              <Route index element={<Navigate to="/dashboard" replace />} />
+              <Route index element={<RoleBasedRedirect />} />
               <Route path="profile" element={<ProfilePage />} />
+
+              {/* ===== SECURITY ===== */}
+              <Route element={<ProtectedRoute roles={["SECURITY", "SECURITY_GUARD"]} />}>
+                <Route path="security/checkin" element={<CheckInScanner />} />
+              </Route>
 
               {/* ===== Part 2: STUDENT & LECTURER (+ optional CLUB_LEADER) ===== */}
               <Route element={<ProtectedRoute roles={["STUDENT", "LECTURER", "CLUB_LEADER"]} />}>
@@ -147,11 +179,6 @@ function App() {
                 <Route path="admin-facility/history" element={<HistoryLog />} />
               </Route>
 
-              {/* ===== SECURITY ===== */}
-              {/* <Route element={<ProtectedRoute roles={["SECURITY"]} />}>
-                <Route path="security/checkin" element={<CheckInScanner />} />
-                <Route path="security/schedule" element={<DailySchedule />} />
-              </Route> */}
             </Route>
           </Route>
 

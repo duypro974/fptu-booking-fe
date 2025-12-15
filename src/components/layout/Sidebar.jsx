@@ -43,16 +43,17 @@ export default function Sidebar({ isOpen }) {
     { icon: History, label: "Lịch sử", path: "/admin-facility/history" },
   ];
 
-  // Xác định menu dựa trên role
+  // Xác định menu dựa trên role (hỗ trợ cả uppercase và lowercase)
+  const normalizedRole = String(role || user?.role || "").toUpperCase();
   let menuItems = STUDENT_LECTURER_MENU;
 
-  if (role === "FACILITY_ADMIN" || user?.role === 'facility_admin') {
+  if (normalizedRole === "FACILITY_ADMIN" || user?.role === 'facility_admin') {
     menuItems = FACILITY_ADMIN_MENU;
-  } else if (role === "SECURITY") {
+  } else if (normalizedRole === "SECURITY" || normalizedRole === "SECURITY_GUARD" || user?.role === 'security' || user?.role === 'SECURITY_GUARD') {
     menuItems = SECURITY_MENU;
-  } else if (role === "CLUB_LEADER") {
+  } else if (normalizedRole === "CLUB_LEADER") {
     menuItems = [...STUDENT_LECTURER_MENU, ...CLUB_LEADER_EXTRA];
-  } else if (role === "CAMPUS_ADMIN" || user?.role === 'campus_admin') {
+  } else if (normalizedRole === "CAMPUS_ADMIN" || user?.role === 'campus_admin') {
     menuItems = STAFF_MENU;
   } else {
     menuItems = STUDENT_LECTURER_MENU;

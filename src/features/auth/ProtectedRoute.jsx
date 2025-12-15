@@ -13,8 +13,20 @@ export default function ProtectedRoute({ roles }) {
   const userRole = String(user?.role || "").toUpperCase();
 
   if (roles?.length) {
-    const allow = roles.map(r => String(r).toUpperCase()).includes(userRole);
-    if (!allow) return <Navigate to="/403" replace />;
+    const normalizedRoles = roles.map(r => String(r).toUpperCase());
+    const allow = normalizedRoles.includes(userRole);
+    
+    console.log('[ProtectedRoute] Checking access:', {
+      userRole,
+      requiredRoles: normalizedRoles,
+      allow,
+      path: location.pathname
+    });
+    
+    if (!allow) {
+      console.warn('[ProtectedRoute] Access denied - redirecting to /403');
+      return <Navigate to="/403" replace />;
+    }
   }
 
   return <Outlet />;
