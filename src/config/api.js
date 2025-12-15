@@ -23,6 +23,10 @@ export const apiRequest = async (endpoint, options = {}) => {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
+  // Thêm timeout 30 giây
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  
   try {
     // Sử dụng cache: 'no-cache' và headers để tránh 304 Not Modified
     // Không thêm _t vào query string vì backend sẽ parse vào Prisma where clause
@@ -37,6 +41,7 @@ export const apiRequest = async (endpoint, options = {}) => {
     
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
+      signal: controller.signal,
       headers: {
         ...headers,
         ...cacheHeaders,
@@ -44,6 +49,8 @@ export const apiRequest = async (endpoint, options = {}) => {
       // Thêm cache control để tránh cache (chuẩn HTTP, không cần query param)
       cache: 'no-cache',
     });
+    
+    clearTimeout(timeoutId);
     console.log('[apiRequest] Response status:', response.status, response.statusText);
 
     // Xử lý lỗi
@@ -68,6 +75,13 @@ export const apiRequest = async (endpoint, options = {}) => {
 
     return response.json();
   } catch (error) {
+    clearTimeout(timeoutId);
+    
+    // Nếu bị abort do timeout
+    if (error.name === 'AbortError') {
+      throw new Error('TIMEOUT_ERROR: Request timeout sau 30 giây. Vui lòng thử lại.');
+    }
+    
     // Nếu lỗi kết nối (ERR_CONNECTION_REFUSED, network error), throw error đặc biệt
     if (error.name === 'TypeError' && error.message.includes('fetch')) {
       throw new Error('CONNECTION_ERROR: Backend không khả dụng. Vui lòng kiểm tra backend có đang chạy không.');

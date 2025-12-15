@@ -24,7 +24,9 @@ import ClubSuggestions from "./features/booking/ClubSuggestions";
 
 // Facility Admin
 import ApprovalList from "./features/admin/ApprovalList";
-import ResourceManagement from "./features/admin/ResourceManagement";
+import RoomManagement from "./features/admin/RoomManagement";
+import EquipmentManagement from "./features/admin/EquipmentManagement";
+import ClubManagement from "./features/admin/ClubManagement";
 import HistoryLog from "./features/admin/HistoryLog";
 
 // // Security
@@ -137,9 +139,11 @@ function App() {
 
               {/* ===== FACILITY ADMIN ===== */}
               <Route element={<ProtectedRoute roles={["FACILITY_ADMIN"]} />}>
-                <Route path="admin-facility" element={<Navigate to="/admin-facility/resources" replace />} />
-                <Route path="admin-facility/resources" element={<ResourceManagement />} />
+                <Route path="admin-facility" element={<Navigate to="/admin-facility/approvals" replace />} />
                 <Route path="admin-facility/approvals" element={<ApprovalList />} />
+                <Route path="admin-facility/rooms" element={<RoomManagement />} />
+                <Route path="admin-facility/equipment" element={<EquipmentManagement />} />
+                <Route path="admin-facility/clubs" element={<ClubManagement />} />
                 <Route path="admin-facility/history" element={<HistoryLog />} />
               </Route>
 

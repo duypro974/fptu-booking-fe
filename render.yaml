@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: fptu-booking-fe
+    env: static
+    buildCommand: npm run build
+    staticPublishPath: ./dist
+    headers:
+      - path: /*
+        name: X-Robots-Tag
+        value: noindex
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+
+
+

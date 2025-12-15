@@ -5,6 +5,7 @@ import { useAuth } from "../../context/AuthContext";
 import Button from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
 import Badge from "../../components/ui/Badge";
+import AdminLayout, { AdminHeader, AdminContent } from "../../components/layout/AdminLayout";
 
 export default function EquipmentManagement() {
   const { user } = useAuth();
@@ -27,27 +28,66 @@ export default function EquipmentManagement() {
   });
 
   useEffect(() => {
-    if (user?.campus) {
+    console.log("[EquipmentManagement] useEffect triggered, user:", user);
+    console.log("[EquipmentManagement] user?.campus:", user?.campus);
+    console.log("[EquipmentManagement] user?.campusId:", user?.campusId);
+    
+    // Nếu user có campus hoặc campusId, load data
+    if (user?.campus || user?.campusId) {
+      console.log("[EquipmentManagement] Loading data...");
       loadData();
+    } else {
+      console.warn("[EquipmentManagement] User không có campus hoặc campusId, không thể load data");
+      setLoading(false);
     }
   }, [user]);
 
   const loadData = async () => {
-    if (!user?.campus) return;
     setLoading(true);
+    console.log("[EquipmentManagement.loadData] Starting, user:", user);
+    
     try {
+      // Convert user.campus hoặc user.campusId sang campusId
+      let campusId = null;
+      
+      if (user?.campusId) {
+        campusId = user.campusId;
+      } else if (typeof user?.campus === 'number') {
+        campusId = user.campus;
+      } else if (typeof user?.campus === 'string') {
+        const campusMap = { hcm: 2, hn: 1, dn: 3, ct: 4, qn: 5 };
+        campusId = campusMap[user.campus.toLowerCase()] || null;
+      }
+
+      // Fallback: nếu không có campusId, dùng campusId = 2 (HCM) làm mặc định
+      if (!campusId) {
+        console.warn("[EquipmentManagement.loadData] Không thể xác định campusId, dùng mặc định campusId = 2 (HCM)");
+        campusId = 2; // Default to HCM
+      }
+
+      console.log("[EquipmentManagement.loadData] Loading data for campusId:", campusId);
+
       // Facility Admin chỉ xem equipment và rooms của campus mình
+      // Note: getAllEquipment API có thể chưa có, nên catch error và trả về empty array
       const [equipmentData, roomsData] = await Promise.all([
-        api.getAllEquipment(user.campus).catch(err => {
-          console.warn("Lỗi tải thiết bị (API chưa có):", err);
+        api.getAllEquipment ? api.getAllEquipment(campusId).catch(err => {
+          console.warn("[EquipmentManagement.loadData] Lỗi tải thiết bị (API chưa có):", err);
           return []; // Trả về mảng rỗng nếu API chưa có
-        }),
-        api.getAllRooms(user.campus),
+        }) : Promise.resolve([]), // Nếu API không tồn tại, trả về empty array
+        api.getRooms({ campusId, includeInactive: true, allStatuses: true }),
       ]);
-      setEquipment(equipmentData);
-      setRooms(roomsData);
+      
+      console.log("[EquipmentManagement.loadData] Received data:", {
+        equipmentCount: equipmentData?.length || 0,
+        roomsCount: roomsData?.length || 0
+      });
+      
+      setEquipment(equipmentData || []);
+      setRooms(roomsData || []);
     } catch (error) {
-      console.error("Lỗi tải dữ liệu:", error);
+      console.error("[EquipmentManagement.loadData] Lỗi tải dữ liệu:", error);
+      setEquipment([]);
+      setRooms([]);
     } finally {
       setLoading(false);
     }
@@ -131,33 +171,37 @@ export default function EquipmentManagement() {
   );
 
   return (
-    <div className="space-y-6">
-      {/* Toolbar */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-3 text-gray-400 w-5 h-5" />
-          <input
-            type="text"
-            placeholder="Tìm kiếm thiết bị..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500"
-          />
+    <AdminLayout>
+      {/* Toolbar - Fixed Header */}
+      <AdminHeader>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-3 text-gray-400 w-5 h-5" />
+            <input
+              type="text"
+              placeholder="Tìm kiếm thiết bị..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500"
+            />
+          </div>
+          <Button onClick={handleCreate} className="flex items-center gap-2">
+            <Plus className="w-5 h-5" />
+            Thêm thiết bị mới
+          </Button>
         </div>
-        <Button onClick={handleCreate} className="flex items-center gap-2">
-          <Plus className="w-5 h-5" />
-          Thêm thiết bị mới
-        </Button>
-      </div>
+      </AdminHeader>
 
-      {/* Table */}
-      {loading ? (
-        <div className="text-center py-20">
-          <div className="animate-spin w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-400">Đang tải dữ liệu...</p>
-        </div>
-      ) : (
-        <Card className="overflow-hidden p-0">
+      {/* Content - Scrollable */}
+      <AdminContent>
+        {/* Table */}
+        {loading ? (
+          <div className="text-center py-20">
+            <div className="animate-spin w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+            <p className="text-gray-400">Đang tải dữ liệu...</p>
+          </div>
+        ) : (
+          <Card className="overflow-hidden p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="bg-gray-50 border-b border-gray-200">
@@ -239,12 +283,15 @@ export default function EquipmentManagement() {
             </table>
           </div>
         </Card>
-      )}
+        )}
+      </AdminContent>
 
-      {/* Modal Create/Edit */}
+      {/* Modal Create/Edit - Scrollable Overlay */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="max-w-2xl w-full max-h-[90vh] flex flex-col">
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="fixed inset-0 bg-black/50 transition-opacity" aria-hidden="true" />
+          <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
+            <Card className="relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-2xl max-h-[90vh] flex flex-col">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold text-gray-900">
                 {editingEquipment ? "Chỉnh sửa thiết bị" : "Thêm thiết bị mới"}
@@ -351,14 +398,17 @@ export default function EquipmentManagement() {
                 </Button>
               </div>
             </form>
-          </Card>
+            </Card>
+          </div>
         </div>
       )}
 
-      {/* Detail Modal */}
+      {/* Detail Modal - Scrollable Overlay */}
       {showDetailModal && selectedEquipment && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="fixed inset-0 bg-black/50 transition-opacity" aria-hidden="true" />
+          <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
+            <Card className="relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-4xl max-h-[90vh] flex flex-col">
             <div className="flex justify-between items-center mb-6 pb-4 border-b">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
@@ -496,10 +546,11 @@ export default function EquipmentManagement() {
                 Chỉnh sửa
               </Button>
             </div>
-          </Card>
+            </Card>
+          </div>
         </div>
       )}
-    </div>
+    </AdminLayout>
   );
 }
 
