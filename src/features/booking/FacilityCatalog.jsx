@@ -5,7 +5,6 @@ import { useAuth } from "../../context/AuthContext";
 
 import Card from "../../components/ui/Card";
 import Button from "../../components/ui/Button";
-import Badge from "../../components/ui/Badge";
 
 import { MapPin, Users, Search, Wifi, Projector, Wind, X, Info, Home } from "lucide-react";
 
@@ -29,17 +28,20 @@ export default function FacilityCatalog() {
   const fetchTypes = async () => {
     try {
       const data = await getFacilityTypes();
-      setTypes(Array.isArray(data) ? data : (data?.items ?? []));
-    } catch (_) { /* empty */ }
+      setTypes(Array.isArray(data) ? data : data?.items ?? []);
+    } catch (_) {
+      setTypes([]);
+    }
   };
 
   const fetchFacilities = async () => {
     setLoading(true);
     setError("");
     try {
-      const data = await getFacilities({ typeId: typeId ? Number(typeId) : undefined });
-
-      setRooms(Array.isArray(data) ? data : (data?.items ?? []));
+      const data = await getFacilities({
+        typeId: typeId ? Number(typeId) : undefined,
+      });
+      setRooms(Array.isArray(data) ? data : data?.items ?? []);
     } catch (e) {
       setRooms([]);
       setError(e?.response?.data?.message || "Không thể tải danh sách phòng.");
@@ -164,7 +166,9 @@ export default function FacilityCatalog() {
                       const typeName = room.typeName || room.type?.name || room.type || "PHÒNG";
                       const typeColor = getRoomTypeColor(typeName);
                       return (
-                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${typeColor.labelBg} ${typeColor.labelText} shadow-sm backdrop-blur-md`}>{typeName}</span>
+                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${typeColor.labelBg} ${typeColor.labelText} shadow-sm backdrop-blur-md`}>
+                          {typeName}
+                        </span>
                       );
                     })()}
                   </div>
@@ -192,13 +196,19 @@ export default function FacilityCatalog() {
             ))
           ) : (
             <div className="col-span-3 text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-300">
-              <p className="text-gray-500">Không có phòng nào trong campus của bạn.</p>
+              <p className="text-gray-500">Không có phòng nào phù hợp.</p>
             </div>
           )}
         </div>
       )}
 
-      {selectedRoom && <FacilityDetailModal room={selectedRoom} campusLabel={campusLabel} onClose={() => setSelectedRoom(null)} />}
+      {selectedRoom && (
+        <FacilityDetailModal
+          room={selectedRoom}
+          campusLabel={campusLabel}
+          onClose={() => setSelectedRoom(null)}
+        />
+      )}
     </div>
   );
 }

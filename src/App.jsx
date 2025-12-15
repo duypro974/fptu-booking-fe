@@ -14,31 +14,25 @@ import Login from "./features/auth/Login";
 import ProfilePage from "./pages/ProfilePage";
 import DashboardPage from "./pages/DashboardPage";
 
-// Booking (Part 2 & 3)
-import RoomSearch from "./features/booking/RoomSearch";
+// Booking
+import RoomSearch from "./features/booking/RoomSearch"; // ✅ đây là trang Đặt phòng
 import BookingForm from "./features/booking/BookingForm";
 import MyBookings from "./features/booking/MyBookings";
 import FacilityCatalog from "./features/booking/FacilityCatalog";
-// Nếu bạn làm MW3:
 import ClubSuggestions from "./features/booking/ClubSuggestions";
 
-// Facility Admin
+// Admin
 import ApprovalList from "./features/admin/ApprovalList";
 import RoomManagement from "./features/admin/RoomManagement";
 import EquipmentManagement from "./features/admin/EquipmentManagement";
 import ClubManagement from "./features/admin/ClubManagement";
 import HistoryLog from "./features/admin/HistoryLog";
 
-// // Security
-// import CheckInScanner from "./features/security/CheckInScanner";
-// import DailySchedule from "./features/security/DailySchedule";
-
 const MainLayout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const { user, loading } = useAuth();
   const location = useLocation();
 
-  // Đợi auth load xong trước khi check user
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -47,26 +41,37 @@ const MainLayout = () => {
     );
   }
 
-  if (!user) return <Navigate to="/login" />;
+  if (!user) return <Navigate to="/login" replace />;
 
-  // Redirect nếu user đang ở sai route theo role
-  const isFacilityAdmin = user?.role === 'facility_admin' || user?.role === 'FACILITY_ADMIN';
-  const isStudent = user?.role === 'student' || user?.role === 'STUDENT';
-  
-  // Nếu Facility Admin đang ở route Student -> redirect
-  if (isFacilityAdmin && (location.pathname === '/dashboard' || location.pathname === '/booking' || location.pathname === '/history')) {
+  const role = (user?.role || "").toLowerCase();
+  const isFacilityAdmin = role === "facility_admin";
+  const isCampusAdmin = role === "campus_admin";
+  const isStudentLike = ["student", "lecturer", "club_leader"].includes(role);
+
+  // ✅ Redirect nếu đang ở sai khu vực theo role
+  // Facility Admin không được vào khu student
+  if (
+    isFacilityAdmin &&
+    (location.pathname === "/dashboard" ||
+      location.pathname === "/booking" ||
+      location.pathname === "/history" ||
+      location.pathname === "/facilities")
+  ) {
     return <Navigate to="/admin-facility" replace />;
   }
-  
-  // Nếu Student đang ở route Admin -> redirect
-  if (isStudent && location.pathname.startsWith('/admin-facility')) {
+
+  // Student không được vào khu facility admin
+  if (isStudentLike && location.pathname.startsWith("/admin-facility")) {
     return <Navigate to="/dashboard" replace />;
   }
 
-  // Kiểm tra nếu đang ở trang Admin thì ẩn Footer
-  const isAdminPage = location.pathname.startsWith('/admin') || 
-                      isFacilityAdmin || 
-                      user?.role === 'campus_admin';
+  // (tuỳ bạn) Student cũng không vào campus admin
+  if (isStudentLike && location.pathname.startsWith("/admin-campus")) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  const isAdminPage =
+    location.pathname.startsWith("/admin") || isFacilityAdmin || isCampusAdmin;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-gray-900">
@@ -105,27 +110,28 @@ function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/403" element={<ForbiddenPage />} />
 
-          {/* Private Layout (cần đăng nhập) */}
+          {/* Private Layout */}
           <Route element={<ProtectedRoute />}>
             <Route path="/" element={<MainLayout />}>
               {/* Common */}
               <Route index element={<Navigate to="/dashboard" replace />} />
               <Route path="profile" element={<ProfilePage />} />
 
-              {/* ===== Part 2: STUDENT & LECTURER (+ optional CLUB_LEADER) ===== */}
+              {/* ===== STUDENT / LECTURER / CLUB_LEADER ===== */}
               <Route element={<ProtectedRoute roles={["STUDENT", "LECTURER", "CLUB_LEADER"]} />}>
-                <Route index element={<Navigate to="/dashboard" replace />} />
                 <Route path="dashboard" element={<DashboardPage />} />
-                {/* New routes (Part 2 & 3) */}
-                <Route path="booking/facilities" element={<FacilityCatalog />} />
-                <Route path="booking/search" element={<RoomSearch />} />
-                <Route path="booking/create" element={<BookingForm />} />
-                <Route path="booking/my" element={<MyBookings />} />
-                {/* Backward compatible routes */}
+
+                {/* ✅ ĐÚNG theo Sidebar mới */}
                 <Route path="booking" element={<RoomSearch />} />
+                <Route path="facilities" element={<FacilityCatalog />} />
                 <Route path="history" element={<MyBookings />} />
 
-                {/* ===== Part 3: CLUB LEADER only (MW3) ===== */}
+                {/* giữ các route cũ nếu bạn còn dùng */}
+                <Route path="booking/create" element={<BookingForm />} />
+                <Route path="booking/my" element={<MyBookings />} />
+                <Route path="booking/search" element={<RoomSearch />} />
+
+                {/* CLUB_LEADER only */}
                 <Route element={<ProtectedRoute roles={["CLUB_LEADER"]} />}>
                   <Route path="booking/club-suggestions" element={<ClubSuggestions />} />
                 </Route>
@@ -146,12 +152,6 @@ function App() {
                 <Route path="admin-facility/clubs" element={<ClubManagement />} />
                 <Route path="admin-facility/history" element={<HistoryLog />} />
               </Route>
-
-              {/* ===== SECURITY ===== */}
-              {/* <Route element={<ProtectedRoute roles={["SECURITY"]} />}>
-                <Route path="security/checkin" element={<CheckInScanner />} />
-                <Route path="security/schedule" element={<DailySchedule />} />
-              </Route> */}
             </Route>
           </Route>
 
