@@ -1,5 +1,6 @@
 // src/services/bookingService.js
 import api from "./api";
+import { apiRequest } from '../config/api';
 
 /** =========================
  *  SEARCH (MW1)
@@ -23,6 +24,43 @@ export const createBooking = async (payload) => {
   return res.data;
 };
 
+// POST /bookings - Tạo Booking (Đặt lẻ / Đặt CLB) - Wrapper với format cũ
+export const createBookingWithFormat = async (data) => {
+  try {
+    const payload = {
+      facilityId: data.facilityId,
+      date: data.date,
+      slots: data.slotIds, // Backend expects array of slot numbers
+      bookingTypeId: data.isEvent ? 2 : 1, // 1: Normal, 2: Event
+      purpose: data.purpose,
+      attendeeCount: data.participants
+    };
+
+    console.log('[createBookingWithFormat] Request payload:', payload);
+    
+    const response = await apiRequest('/bookings', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+
+    console.log('[createBookingWithFormat] Response:', response);
+    
+    return {
+      success: true,
+      bookingId: response.id,
+      bookingCode: response.bookingCode || `BK-${response.id}`,
+      message: "Yêu cầu đặt phòng đã được gửi thành công"
+    };
+  } catch (error) {
+    console.error('[createBookingWithFormat] Error:', error);
+    console.error('[createBookingWithFormat] Error details:', {
+      message: error.message,
+      stack: error.stack
+    });
+    throw error;
+  }
+};
+
 /** =========================
  *  MY BOOKINGS (NEW)
  *  GET /bookings/me
@@ -44,6 +82,28 @@ export const getMyBookings = async () => {
         method: error.config?.method,
         headers: error.config?.headers
       }
+    });
+    throw error;
+  }
+};
+
+/** =========================
+ *  ALL BOOKINGS (ADMIN)
+ *  GET /bookings/all-bookings?campusId
+ *  ========================= */
+export const getAllBookings = async (campusId) => {
+  try {
+    const params = campusId ? { campusId: Number(campusId) } : {};
+    console.log('[getAllBookings] Calling API /bookings/all-bookings with params:', params);
+    const res = await api.get("/bookings/all-bookings", { params });
+    console.log('[getAllBookings] Response received:', res.data?.length || 0, 'bookings');
+    return res.data;
+  } catch (error) {
+    console.error('[getAllBookings] Error:', {
+      message: error.message,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      data: error.response?.data
     });
     throw error;
   }

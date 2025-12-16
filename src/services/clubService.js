@@ -1,21 +1,81 @@
 // src/services/clubService.js
 import api from "./api";
+import { apiRequest } from '../config/api';
 
 export const getClubs = async ({ campusId } = {}) => {
   const res = await api.get("/clubs", { params: campusId ? { campusId } : {} });
   return res.data;
 };
 
-export const createClub = async (payload) => (await api.post("/clubs", payload)).data;
+export const createClub = async (payload) => {
+  try {
+    const data = await apiRequest('/clubs', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    return data;
+  } catch (error) {
+    console.error('[createClub] Error:', error);
+    throw error;
+  }
+};
 
-export const updateClub = async (id, payload) => (await api.put(`/clubs/${id}`, payload)).data;
+export const updateClub = async (id, payload) => {
+  try {
+    const data = await apiRequest(`/clubs/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+    return data;
+  } catch (error) {
+    console.error('[updateClub] Error:', error);
+    throw error;
+  }
+};
 
-export const deleteClub = async (id) => (await api.delete(`/clubs/${id}`)).data;
+export const deleteClub = async (id) => {
+  try {
+    const data = await apiRequest(`/clubs/${id}`, {
+      method: 'DELETE'
+    });
+    return data;
+  } catch (error) {
+    console.error('[deleteClub] Error:', error);
+    throw error;
+  }
+};
 
-export const getClubPriorities = async (clubId) => (await api.get(`/clubs/${clubId}/priorities`)).data;
+export const getClubPriorities = async (clubId) => {
+  try {
+    const data = await apiRequest(`/clubs/${clubId}/priorities`);
+    return data;
+  } catch (error) {
+    console.error('[getClubPriorities] Error:', error);
+    throw error;
+  }
+};
 
-export const addClubPriority = async (clubId, payload) =>
-  (await api.post(`/clubs/${clubId}/priorities`, payload)).data;
+export const addClubPriority = async (clubId, payload) => {
+  try {
+    const data = await apiRequest(`/clubs/${clubId}/priorities`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    return data;
+  } catch (error) {
+    console.error('[addClubPriority] Error:', error);
+    throw error;
+  }
+};
 
-export const removeClubPriority = async (clubId, facilityId) =>
-  (await api.delete(`/clubs/${clubId}/priorities/${facilityId}`)).data;
+export const removeClubPriority = async (clubId, facilityId) => {
+  try {
+    const data = await apiRequest(`/clubs/${clubId}/priorities/${facilityId}`, {
+      method: 'DELETE'
+    });
+    return data;
+  } catch (error) {
+    console.error('[removeClubPriority] Error:', error);
+    throw error;
+  }
+};

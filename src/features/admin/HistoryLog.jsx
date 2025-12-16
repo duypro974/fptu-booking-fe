@@ -20,21 +20,36 @@ export default function HistoryLog() {
   }, [user]);
 
   const loadHistory = async () => {
-    if (!user?.campus) return;
+    // Lấy campusId từ user object (có thể là user.campusId hoặc user.campus)
+    const campusId = user?.campusId || user?.campus;
+    if (!campusId) {
+      console.warn('[HistoryLog] No campusId found in user object:', user);
+      setLoading(false);
+      return;
+    }
+    
     setLoading(true);
     try {
-      const data = await api.getAllHistory(user.campus);
-      setHistory(data);
+      console.log('[HistoryLog] Loading history with campusId:', campusId);
+      const data = await api.getAllHistory(campusId);
+      console.log('[HistoryLog] Received history data:', data?.length || 0, 'items');
+      setHistory(data || []);
     } catch (error) {
       console.error("Lỗi tải lịch sử:", error);
+      setHistory([]);
     } finally {
       setLoading(false);
     }
   };
 
   const handleViewDetail = (log) => {
-    setSelectedLog(log);
-    setShowDetailModal(true);
+    if (log === null) {
+      setSelectedLog(null);
+      setShowDetailModal(false);
+    } else {
+      setSelectedLog(log);
+      setShowDetailModal(true);
+    }
   };
 
   const filteredHistory = history.filter((log) => {
@@ -133,168 +148,242 @@ export default function HistoryLog() {
       ) : (
         <div className="space-y-3">
           {filteredHistory.map((log, idx) => (
-            <Card key={idx} className="p-5 hover:shadow-md transition-shadow cursor-pointer" onClick={() => handleViewDetail(log)}>
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex items-start gap-4 flex-1">
-                  {/* Icon */}
-                  <div className="p-2 bg-gray-100 rounded-lg">
-                    {getEntityIcon(log.entityType)}
+            <div key={idx} className="space-y-0">
+              <Card className="p-5 hover:shadow-md transition-shadow cursor-pointer" onClick={() => handleViewDetail(log.id === selectedLog?.id ? null : log)}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-4 flex-1">
+                    {/* Icon */}
+                    <div className="p-2 bg-gray-100 rounded-lg">
+                      {getEntityIcon(log.entityType)}
+                    </div>
+                    
+                    {/* Content */}
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <h3 className="font-semibold text-gray-900">{log.action}</h3>
+                        {log.entityType && (
+                          <Badge type="info" className="text-xs">
+                            {getEntityTypeLabel(log.entityType)}
+                          </Badge>
+                        )}
+                      </div>
+                      
+                      {log.entityName && (
+                        <p className="text-sm text-gray-700 mb-1">
+                          <span className="font-medium">{log.entityName}</span>
+                        </p>
+                      )}
+                      
+                      {log.changes && (
+                        <p className="text-sm text-gray-600 mb-2">{log.changes}</p>
+                      )}
+                      
+                      <div className="flex items-center gap-4 text-xs text-gray-500">
+                        {log.userName && (
+                          <span>Bởi: <span className="font-medium">{log.userName}</span></span>
+                        )}
+                        <span className="flex items-center gap-1">
+                          <Calendar className="w-3 h-3" />
+                          {log.timestamp}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                   
-                  {/* Content */}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2">
-                      <h3 className="font-semibold text-gray-900">{log.action}</h3>
-                      {log.entityType && (
-                        <Badge type="info" className="text-xs">
-                          {getEntityTypeLabel(log.entityType)}
-                        </Badge>
-                      )}
+                  {/* View Detail Button */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleViewDetail(log.id === selectedLog?.id ? null : log);
+                    }}
+                    className="flex items-center gap-2"
+                  >
+                    <Eye className="w-4 h-4" />
+                    {selectedLog?.id === log.id ? 'Ẩn chi tiết' : 'Chi tiết'}
+                  </Button>
+                </div>
+              </Card>
+              
+              {/* Inline Detail Panel */}
+              {selectedLog?.id === log.id && (
+                <Card className="mt-0 border-t-0 rounded-t-none p-6 bg-gray-50">
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center mb-4 pb-3 border-b">
+                      <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                        {getEntityIcon(selectedLog.entityType)}
+                        Chi tiết đơn đặt phòng
+                      </h3>
+                      <button
+                        onClick={() => {
+                          setSelectedLog(null);
+                          setShowDetailModal(false);
+                        }}
+                        className="text-gray-400 hover:text-gray-600 text-xl"
+                      >
+                        ×
+                      </button>
                     </div>
-                    
-                    {log.entityName && (
-                      <p className="text-sm text-gray-700 mb-1">
-                        <span className="font-medium">{log.entityName}</span>
-                      </p>
-                    )}
-                    
-                    {log.changes && (
-                      <p className="text-sm text-gray-600 mb-2">{log.changes}</p>
-                    )}
-                    
-                    <div className="flex items-center gap-4 text-xs text-gray-500">
-                      {log.userName && (
-                        <span>Bởi: <span className="font-medium">{log.userName}</span></span>
+
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-sm font-medium text-gray-500">Hành động</label>
+                        <p className="text-gray-900 font-semibold text-lg mt-1">{selectedLog.action}</p>
+                      </div>
+
+                      {selectedLog.entityType && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">Loại</label>
+                          <div className="mt-1">
+                            <Badge type="info">{getEntityTypeLabel(selectedLog.entityType)}</Badge>
+                          </div>
+                        </div>
                       )}
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {log.timestamp}
-                      </span>
+
+                      {/* Thông tin Booking chi tiết */}
+                      {selectedLog.entityType === 'booking' && selectedLog.facility && (
+                        <>
+                          <div>
+                            <label className="text-sm font-medium text-gray-500">Mã đơn đặt phòng</label>
+                            <p className="text-gray-900 font-medium mt-1">#{selectedLog.id}</p>
+                          </div>
+
+                          <div>
+                            <label className="text-sm font-medium text-gray-500">Trạng thái</label>
+                            <div className="mt-1">
+                              <Badge 
+                                type={
+                                  selectedLog.status === 'APPROVED' ? 'success' :
+                                  selectedLog.status === 'REJECTED' ? 'danger' :
+                                  selectedLog.status === 'CANCELLED' ? 'warning' :
+                                  selectedLog.status === 'COMPLETED' ? 'success' :
+                                  'info'
+                                }
+                              >
+                                {selectedLog.status}
+                              </Badge>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-sm font-medium text-gray-500">Phòng</label>
+                            <p className="text-gray-900 font-medium mt-1">{selectedLog.facility?.name || selectedLog.entityName}</p>
+                            {selectedLog.facility?.capacity && (
+                              <p className="text-sm text-gray-500 mt-1">Sức chứa: {selectedLog.facility.capacity} người</p>
+                            )}
+                            {selectedLog.facility?.type?.name && (
+                              <p className="text-sm text-gray-500">Loại phòng: {selectedLog.facility.type.name}</p>
+                            )}
+                          </div>
+
+                          {selectedLog.startTime && selectedLog.endTime && (
+                            <>
+                              <div>
+                                <label className="text-sm font-medium text-gray-500">Thời gian bắt đầu</label>
+                                <p className="text-gray-900 font-medium mt-1 flex items-center gap-2">
+                                  <Calendar className="w-4 h-4" />
+                                  {new Date(selectedLog.startTime).toLocaleString('vi-VN', {
+                                    year: 'numeric',
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                  })}
+                                </p>
+                              </div>
+
+                              <div>
+                                <label className="text-sm font-medium text-gray-500">Thời gian kết thúc</label>
+                                <p className="text-gray-900 font-medium mt-1 flex items-center gap-2">
+                                  <Calendar className="w-4 h-4" />
+                                  {new Date(selectedLog.endTime).toLocaleString('vi-VN', {
+                                    year: 'numeric',
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                  })}
+                                </p>
+                              </div>
+                            </>
+                          )}
+
+                          {selectedLog.attendeeCount !== undefined && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-500">Số người tham gia</label>
+                              <p className="text-gray-900 font-medium mt-1">{selectedLog.attendeeCount} người</p>
+                            </div>
+                          )}
+
+                          {selectedLog.bookingType && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-500">Loại đặt phòng</label>
+                              <p className="text-gray-900 font-medium mt-1">{selectedLog.bookingType.name}</p>
+                              {selectedLog.bookingType.description && (
+                                <p className="text-sm text-gray-500 mt-1">{selectedLog.bookingType.description}</p>
+                              )}
+                            </div>
+                          )}
+
+                          {selectedLog.isCheckedIn !== undefined && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-500">Trạng thái check-in</label>
+                              <div className="mt-1">
+                                <Badge type={selectedLog.isCheckedIn ? 'success' : 'warning'}>
+                                  {selectedLog.isCheckedIn ? 'Đã check-in' : 'Chưa check-in'}
+                                </Badge>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      {selectedLog.changes && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">Chi tiết thay đổi</label>
+                          <div className="mt-1 p-3 bg-white border border-gray-200 rounded-lg">
+                            <p className="text-gray-900">{selectedLog.changes}</p>
+                          </div>
+                        </div>
+                      )}
+
+                      {selectedLog.user && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">Người đặt</label>
+                          <p className="text-gray-900 font-medium mt-1">{selectedLog.user.fullName || selectedLog.userName}</p>
+                          {selectedLog.user.email && (
+                            <p className="text-sm text-gray-500 mt-1">{selectedLog.user.email}</p>
+                          )}
+                          {selectedLog.user.role && (
+                            <p className="text-sm text-gray-500">Vai trò: {selectedLog.user.role}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {!selectedLog.user && selectedLog.userName && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">Người thực hiện</label>
+                          <p className="text-gray-900 font-medium mt-1">{selectedLog.userName}</p>
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="text-sm font-medium text-gray-500">Thời gian tạo</label>
+                        <p className="text-gray-900 font-medium mt-1 flex items-center gap-2">
+                          <Calendar className="w-4 h-4" />
+                          {selectedLog.timestamp}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
-                
-                {/* View Detail Button */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleViewDetail(log);
-                  }}
-                  className="flex items-center gap-2"
-                >
-                  <Eye className="w-4 h-4" />
-                  Chi tiết
-                </Button>
-              </div>
-            </Card>
+                </Card>
+              )}
+            </div>
           ))}
         </div>
       )}
 
-      {/* Detail Modal */}
-      {showDetailModal && selectedLog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6 pb-4 border-b">
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                  {getEntityIcon(selectedLog.entityType)}
-                  Chi tiết lịch sử
-                </h2>
-                <p className="text-sm text-gray-500 mt-1">Thông tin chi tiết về thay đổi</p>
-              </div>
-              <button
-                onClick={() => {
-                  setShowDetailModal(false);
-                  setSelectedLog(null);
-                }}
-                className="text-gray-400 hover:text-gray-600 text-2xl"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium text-gray-500">Hành động</label>
-                <p className="text-gray-900 font-semibold text-lg mt-1">{selectedLog.action}</p>
-              </div>
-
-              {selectedLog.entityType && (
-                <div>
-                  <label className="text-sm font-medium text-gray-500">Loại</label>
-                  <div className="mt-1">
-                    <Badge type="info">{getEntityTypeLabel(selectedLog.entityType)}</Badge>
-                  </div>
-                </div>
-              )}
-
-              {selectedLog.entityName && (
-                <div>
-                  <label className="text-sm font-medium text-gray-500">Tên entity</label>
-                  <p className="text-gray-900 font-medium mt-1">{selectedLog.entityName}</p>
-                </div>
-              )}
-
-              {selectedLog.changes && (
-                <div>
-                  <label className="text-sm font-medium text-gray-500">Chi tiết thay đổi</label>
-                  <div className="mt-1 p-3 bg-gray-50 border border-gray-200 rounded-lg">
-                    <p className="text-gray-900">{selectedLog.changes}</p>
-                  </div>
-                </div>
-              )}
-
-              {selectedLog.userName && (
-                <div>
-                  <label className="text-sm font-medium text-gray-500">Người thực hiện</label>
-                  <p className="text-gray-900 font-medium mt-1">{selectedLog.userName}</p>
-                </div>
-              )}
-
-              <div>
-                <label className="text-sm font-medium text-gray-500">Thời gian</label>
-                <p className="text-gray-900 font-medium mt-1 flex items-center gap-2">
-                  <Calendar className="w-4 h-4" />
-                  {selectedLog.timestamp}
-                </p>
-              </div>
-
-              {selectedLog.oldValue && (
-                <div>
-                  <label className="text-sm font-medium text-gray-500">Giá trị cũ</label>
-                  <div className="mt-1 p-3 bg-red-50 border border-red-200 rounded-lg">
-                    <p className="text-gray-900">{selectedLog.oldValue}</p>
-                  </div>
-                </div>
-              )}
-
-              {selectedLog.newValue && (
-                <div>
-                  <label className="text-sm font-medium text-gray-500">Giá trị mới</label>
-                  <div className="mt-1 p-3 bg-green-50 border border-green-200 rounded-lg">
-                    <p className="text-gray-900">{selectedLog.newValue}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end gap-3 pt-4 mt-6 border-t">
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setShowDetailModal(false);
-                  setSelectedLog(null);
-                }}
-              >
-                Đóng
-              </Button>
-            </div>
-          </Card>
-        </div>
-      )}
     </div>
   );
 }

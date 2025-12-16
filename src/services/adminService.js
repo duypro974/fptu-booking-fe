@@ -1,5 +1,14 @@
 // src/services/adminService.js
 import api from "./api";
+import { apiRequest } from '../config/api';
+import { getAllBookings } from "./bookingService";
+
+// Helper: Map campus string (hcm, hn) sang campusId number cho backend
+const getCampusId = (campus) => {
+  if (typeof campus === 'number') return campus;
+  const campusMap = { hcm: 2, hn: 1, dn: 3, ct: 4, qn: 5 };
+  return campusMap[campus?.toLowerCase()] || null;
+};
 
 // GET /admin/statistics?campusId&dateRange
 export const getStatistics = async (campusId, dateRange = "week") => {
@@ -14,52 +23,188 @@ export const getStatistics = async (campusId, dateRange = "week") => {
   return res.data;
 };
 
-// GET /bookings/history?campusId (hoặc /admin/history?campusId)
+// GET /bookings/pending-approvals?campusId
+export const getPendingApprovals = async (campus) => {
+  try {
+    const campusId = getCampusId(campus);
+    const params = campusId ? `?campusId=${campusId}` : '';
+    const data = await apiRequest(`/bookings/pending-approvals${params}`);
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.error('[getPendingApprovals] Error:', error);
+    // Nếu 404, trả về empty array
+    if (error.message?.includes('404') || error.message?.includes('Not Found')) {
+      return [];
+    }
+    throw error;
+  }
+};
+
+// GET /bookings/conflicts?campusId - Xem các đơn bị xung đột lịch (tất cả)
+export const getAllConflicts = async (campus) => {
+  try {
+    const campusId = getCampusId(campus);
+    const params = campusId ? `?campusId=${campusId}` : '';
+    const data = await apiRequest(`/bookings/conflicts${params}`);
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.error('[getAllConflicts] Error:', error);
+    // Nếu 404, trả về empty array
+    if (error.message?.includes('404') || error.message?.includes('Not Found')) {
+      return [];
+    }
+    throw error;
+  }
+};
+
+// GET /bookings/conflicts?campusId - Xem conflicts của một booking cụ thể
+export const checkBookingConflicts = async (bookingId, campus) => {
+  try {
+    const campusId = getCampusId(campus);
+    const params = campusId ? `?campusId=${campusId}` : '';
+    const allConflicts = await apiRequest(`/bookings/conflicts${params}`);
+    const conflictsArray = Array.isArray(allConflicts) ? allConflicts : [];
+    
+    const relatedConflicts = conflictsArray.filter(conflict => {
+      return conflict.id === bookingId || 
+             conflict.bookingId === bookingId ||
+             (conflict.facilityId && conflict.facilityId === bookingId);
+    });
+    
+    console.log('[checkBookingConflicts] Found', relatedConflicts.length, 'conflicts for booking', bookingId);
+    return relatedConflicts;
+  } catch (error) {
+    console.error('[checkBookingConflicts] Error:', error);
+    if (error.message?.includes('404') || error.message?.includes('Not Found')) {
+      console.warn('[checkBookingConflicts] 404 - Endpoint không tồn tại');
+    }
+    return [];
+  }
+};
+
+// PATCH /bookings/{id}/approve
+export const approveBooking = async (bookingId, campus, adminName, alternativeFacilityId = null) => {
+  try {
+    const payload = {};
+    if (alternativeFacilityId) {
+      payload.alternativeFacilityId = alternativeFacilityId;
+    }
+    
+    const data = await apiRequest(`/bookings/${bookingId}/approve`, {
+      method: 'PATCH',
+      body: Object.keys(payload).length > 0 ? JSON.stringify(payload) : undefined
+    });
+    return data;
+  } catch (error) {
+    console.error('[approveBooking] Error:', error);
+    throw error;
+  }
+};
+
+// PATCH /bookings/{id}/reject
+export const rejectBooking = async (bookingId, reason, adminName) => {
+  try {
+    const data = await apiRequest(`/bookings/${bookingId}/reject`, {
+      method: 'PATCH',
+      body: JSON.stringify({ reason })
+    });
+    return data;
+  } catch (error) {
+    console.error('[rejectBooking] Error:', error);
+    throw error;
+  }
+};
+
+// GET /bookings/all-bookings?campusId - Lấy tất cả bookings và map sang format history log
 export const getAllHistory = async (campusId) => {
   try {
-    const params = {};
+    // Convert campusId sang number nếu cần
+    let numericCampusId = null;
     if (campusId !== undefined && campusId !== null) {
-      // Đảm bảo campusId là number (Prisma expect Int)
-      params.campusId = typeof campusId === 'string' ? parseInt(campusId, 10) : Number(campusId);
-    }
-    console.log('[getAllHistory] Calling API with params:', params);
-    
-    // Thử endpoint /bookings/history trước (booking history)
-    let res;
-    try {
-      res = await api.get("/bookings/history", { params });
-      console.log('[getAllHistory] Success from /bookings/history, received:', res.data?.length || 0, 'items');
-    } catch (error) {
-      const status = error.response?.status;
-      // Nếu 404 (not found) hoặc 403 (forbidden), thử endpoint khác
-      if (status === 404 || status === 403) {
-        console.log(`[getAllHistory] /bookings/history returned ${status}, trying /admin/history...`);
-        try {
-          res = await api.get("/admin/history", { params });
-          console.log('[getAllHistory] Success from /admin/history, received:', res.data?.length || 0, 'items');
-        } catch (secondError) {
-          // Nếu cả 2 endpoint đều 404/403, trả về empty array
-          const secondStatus = secondError.response?.status;
-          if (secondStatus === 404 || secondStatus === 403) {
-            console.warn(`[getAllHistory] Both endpoints returned ${secondStatus}. User may not have permission or endpoint not available. Returning empty array.`);
-            return [];
-          }
-          throw secondError;
-        }
-      } else {
-        throw error;
+      numericCampusId = typeof campusId === 'string' ? parseInt(campusId, 10) : Number(campusId);
+      // Map campus string (hcm, hn) sang campusId number
+      if (isNaN(numericCampusId)) {
+        const campusMap = { hcm: 2, hn: 1, dn: 3, ct: 4, qn: 5 };
+        numericCampusId = campusMap[campusId?.toLowerCase()] || null;
       }
     }
     
-    // Trả về mảng rỗng nếu data không tồn tại hoặc không phải array
-    const data = res.data;
-    if (!data) {
-      console.log('[getAllHistory] No data returned, returning empty array');
+    console.log('[getAllHistory] Calling getAllBookings with campusId:', numericCampusId);
+    
+    // Gọi API /bookings/all-bookings
+    const bookings = await getAllBookings(numericCampusId);
+    
+    if (!Array.isArray(bookings)) {
+      console.log('[getAllHistory] No bookings returned, returning empty array');
       return [];
     }
     
-    // Đảm bảo trả về array
-    return Array.isArray(data) ? data : [];
+    console.log('[getAllHistory] Received', bookings.length, 'bookings');
+    
+    // Map bookings sang format history log
+    const historyLogs = bookings.map((booking) => {
+      const startTime = new Date(booking.startTime);
+      const endTime = new Date(booking.endTime);
+      const createdAt = new Date(booking.createdAt);
+      
+      // Format thời gian
+      const formatDateTime = (date) => {
+        return date.toLocaleString('vi-VN', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      };
+      
+      // Map status sang action
+      const getAction = (status) => {
+        switch (status) {
+          case 'PENDING':
+            return 'Đơn đặt phòng mới';
+          case 'APPROVED':
+            return 'Đơn đặt phòng đã duyệt';
+          case 'REJECTED':
+            return 'Đơn đặt phòng bị từ chối';
+          case 'CANCELLED':
+            return 'Đơn đặt phòng đã hủy';
+          case 'COMPLETED':
+            return 'Đơn đặt phòng đã hoàn thành';
+          case 'PREEMPTED':
+            return 'Đơn đặt phòng bị thay thế';
+          default:
+            return `Đơn đặt phòng - ${status}`;
+        }
+      };
+      
+      return {
+        id: booking.id,
+        action: getAction(booking.status),
+        entityType: 'booking',
+        entityName: booking.facility?.name || 'Phòng không xác định',
+        userName: booking.user?.fullName || booking.user?.email || 'Người dùng không xác định',
+        timestamp: formatDateTime(createdAt),
+        changes: `Đặt phòng ${booking.facility?.name || ''} từ ${formatDateTime(startTime)} đến ${formatDateTime(endTime)}. Số người: ${booking.attendeeCount || 0}. Loại: ${booking.bookingType?.name || 'N/A'}`,
+        status: booking.status,
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+        attendeeCount: booking.attendeeCount,
+        facility: booking.facility,
+        user: booking.user,
+        bookingType: booking.bookingType,
+        isCheckedIn: booking.isCheckedIn
+      };
+    });
+    
+    // Sắp xếp theo thời gian tạo (mới nhất trước)
+    historyLogs.sort((a, b) => {
+      const timeA = new Date(a.startTime || a.timestamp).getTime();
+      const timeB = new Date(b.startTime || b.timestamp).getTime();
+      return timeB - timeA;
+    });
+    
+    return historyLogs;
   } catch (error) {
     console.error('[getAllHistory] Error:', {
       campusId,
