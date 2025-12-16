@@ -9,6 +9,7 @@ import {
   Package,
   Sparkles,
   Home,
+  Repeat,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "../../lib/utils";
@@ -31,6 +32,10 @@ export default function Sidebar({ isOpen }) {
 
   const CLUB_LEADER_EXTRA = [
     { icon: Sparkles, label: "Gợi ý ưu tiên CLB", path: "/booking/club-suggestions" },
+  ];
+
+  const LECTURER_EXTRA = [
+    { icon: Repeat, label: "Đặt phòng định kỳ", path: "/booking/recurring" },
   ];
 
   const CAMPUS_ADMIN_MENU = [
@@ -72,6 +77,8 @@ export default function Sidebar({ isOpen }) {
     menuItems = SYSTEM_ADMIN_MENU;
   } else if (userRole === "club_leader") {
     menuItems = [...STUDENT_LECTURER_MENU, ...CLUB_LEADER_EXTRA];
+  } else if (userRole === "lecturer") {
+    menuItems = [...STUDENT_LECTURER_MENU, ...LECTURER_EXTRA];
   } else {
     menuItems = STUDENT_LECTURER_MENU;
   }

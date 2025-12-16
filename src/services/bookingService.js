@@ -62,6 +62,24 @@ export const getClubSuggestions = async ({ date, slot }) => {
 };
 
 /** =========================
+ *  LECTURER SPECIFIC - RECURRING BOOKINGS (MW2.2, MW2.4)
+ *  ========================= */
+
+// POST /bookings/recurring/scan
+// [MW2.2] Scan tính khả dụng cho lịch định kỳ
+export const scanRecurringAvailability = async (payload) => {
+  const res = await api.post("/bookings/recurring/scan", payload);
+  return res.data;
+};
+
+// POST /bookings/recurring
+// [MW2.4] Tạo Booking định kỳ (Transaction)
+export const createRecurringBooking = async (payload) => {
+  const res = await api.post("/bookings/recurring", payload);
+  return res.data;
+};
+
+/** =========================
  *  SECURITY GUARD APIs (MW5)
  *  ========================= */
 

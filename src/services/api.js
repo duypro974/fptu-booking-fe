@@ -257,6 +257,62 @@ export const api = {
     }
   },
 
+  // POST /bookings/recurring/scan - [MW2.2] Scan tính khả dụng cho lịch định kỳ (Lecturer only)
+  scanRecurringAvailability: async (data) => {
+    try {
+      const payload = {
+        originalFacilityId: data.originalFacilityId,
+        startDate: data.startDate,
+        weeks: data.weeks,
+        slot: data.slot || [data.slotId], // Backend expects array
+        capacity: data.capacity,
+        typeId: data.typeId
+      };
+
+      console.log('[scanRecurringAvailability] Request payload:', payload);
+      
+      const response = await apiRequest('/bookings/recurring/scan', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+
+      console.log('[scanRecurringAvailability] Response:', response);
+      return response;
+    } catch (error) {
+      console.error('[scanRecurringAvailability] Error:', error);
+      throw error;
+    }
+  },
+
+  // POST /bookings/recurring - [MW2.4] Tạo Booking định kỳ (Transaction) (Lecturer only)
+  createRecurringBooking: async (data) => {
+    try {
+      const payload = {
+        note: data.note || '',
+        bookings: data.bookings.map(booking => ({
+          facilityId: booking.facilityId,
+          bookingTypeId: booking.bookingTypeId,
+          startTime: booking.startTime,
+          endTime: booking.endTime,
+          attendeeCount: booking.attendeeCount
+        }))
+      };
+
+      console.log('[createRecurringBooking] Request payload:', payload);
+      
+      const response = await apiRequest('/bookings/recurring', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+
+      console.log('[createRecurringBooking] Response:', response);
+      return response;
+    } catch (error) {
+      console.error('[createRecurringBooking] Error:', error);
+      throw error;
+    }
+  },
+
   // GET /clubs - Xem danh sách CLB
   getClubs: async (campusId = null) => {
     try {

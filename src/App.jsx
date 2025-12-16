@@ -20,6 +20,7 @@ import BookingForm from "./features/booking/BookingForm";
 import MyBookings from "./features/booking/MyBookings";
 import FacilityCatalog from "./features/booking/FacilityCatalog";
 import ClubSuggestions from "./features/booking/ClubSuggestions";
+import RecurringBooking from "./features/booking/RecurringBooking";
 
 // Admin
 import ApprovalList from "./features/admin/ApprovalList";
@@ -172,6 +173,11 @@ function App() {
                 {/* CLUB_LEADER only */}
                 <Route element={<ProtectedRoute roles={["CLUB_LEADER"]} />}>
                   <Route path="booking/club-suggestions" element={<ClubSuggestions />} />
+                </Route>
+
+                {/* LECTURER only */}
+                <Route element={<ProtectedRoute roles={["LECTURER"]} />}>
+                  <Route path="booking/recurring" element={<RecurringBooking />} />
                 </Route>
               </Route>
 
