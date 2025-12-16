@@ -22,6 +22,7 @@ export default function ApprovalList() {
   const [loadingAvailableRooms, setLoadingAvailableRooms] = useState(false);
   const [roomStatus, setRoomStatus] = useState(null); // 'active', 'maintenance', 'inactive'
   const [isRoomMaintenance, setIsRoomMaintenance] = useState(false);
+  const [isRoomInactive, setIsRoomInactive] = useState(false);
   const [isUsingFallback, setIsUsingFallback] = useState(false); // Track xem có đang dùng fallback không
 
   // Chỉ Facility Admin mới có quyền chuyển phòng
@@ -434,25 +435,45 @@ export default function ApprovalList() {
     // Lấy roomId và kiểm tra trạng thái phòng
     const currentRoomId = request.facilityId || request.roomId || request.facility?.id;
     let roomMaintenance = false;
+    let roomInactive = false;
     
     // Kiểm tra trạng thái phòng từ request data trước (nếu có)
     const requestRoomStatus = request.facility?.status || request.room?.status || request.status;
-    if (requestRoomStatus === 'MAINTENANCE' || requestRoomStatus === 'maintenance') {
+    const statusUpper = String(requestRoomStatus || '').toUpperCase();
+    
+    if (statusUpper === 'MAINTENANCE') {
       roomMaintenance = true;
       setIsRoomMaintenance(true);
+      setIsRoomInactive(false);
+    } else if (statusUpper === 'INACTIVE') {
+      roomInactive = true;
+      setIsRoomInactive(true);
+      setIsRoomMaintenance(false);
+    } else {
+      setIsRoomMaintenance(false);
+      setIsRoomInactive(false);
     }
     
     // Nếu chưa có thông tin từ request, gọi API để kiểm tra (chỉ Facility Admin)
-    if (!roomMaintenance && currentRoomId && isFacilityAdmin) {
+    if (!roomMaintenance && !roomInactive && currentRoomId && isFacilityAdmin) {
       try {
         const roomDetail = await api.getFacilityDetail(currentRoomId);
-        const roomStatusValue = roomDetail?.status || roomDetail?.facilityStatus;
+        const roomStatusValue = String(roomDetail?.status || roomDetail?.facilityStatus || '').toUpperCase();
         
         // Kiểm tra nếu phòng đang bảo trì
-        if (roomStatusValue === 'MAINTENANCE' || roomStatusValue === 'maintenance' || 
-            roomDetail?.status === 'MAINTENANCE' || roomDetail?.facilityStatus === 'maintenance') {
+        if (roomStatusValue === 'MAINTENANCE') {
           roomMaintenance = true;
           setIsRoomMaintenance(true);
+          setIsRoomInactive(false);
+        } 
+        // Kiểm tra nếu phòng đang ngừng hoạt động
+        else if (roomStatusValue === 'INACTIVE') {
+          roomInactive = true;
+          setIsRoomInactive(true);
+          setIsRoomMaintenance(false);
+        } else {
+          setIsRoomMaintenance(false);
+          setIsRoomInactive(false);
         }
       } catch (error) {
         console.error("[handleApprove] Lỗi kiểm tra trạng thái phòng:", error);
@@ -474,8 +495,9 @@ export default function ApprovalList() {
     
     // Fetch available rooms nếu:
     // 1. Có conflict HOẶC
-    // 2. Phòng đang bảo trì
-    const shouldFetchRooms = (conflicts.length > 0 || roomMaintenance) && 
+    // 2. Phòng đang bảo trì HOẶC
+    // 3. Phòng đang ngừng hoạt động
+    const shouldFetchRooms = (conflicts.length > 0 || roomMaintenance || roomInactive) && 
                               request.startTime && 
                               request.endTime && 
                               isFacilityAdmin;
@@ -483,6 +505,7 @@ export default function ApprovalList() {
     console.log("[handleApprove] shouldFetchRooms:", shouldFetchRooms, {
       hasConflicts: conflicts.length > 0,
       roomMaintenance,
+      roomInactive,
       hasStartTime: !!request.startTime,
       hasEndTime: !!request.endTime,
       isFacilityAdmin
@@ -857,6 +880,7 @@ export default function ApprovalList() {
                     setSelectedNewRoom(null);
                     setAvailableRooms([]);
                     setIsRoomMaintenance(false);
+                    setIsRoomInactive(false);
                   }}
                   className="text-gray-400 hover:text-gray-600 text-2xl"
                 >
@@ -869,7 +893,7 @@ export default function ApprovalList() {
                   Bạn đang duyệt yêu cầu đặt phòng <strong>{selectedRequest.roomName}</strong> của <strong>{selectedRequest.userName}</strong>.
                 </p>
 
-                {(conflictCount > 0 || isRoomMaintenance) ? (
+                {(conflictCount > 0 || isRoomMaintenance || isRoomInactive) ? (
                   <div className="space-y-4">
                     {/* Alert phòng bảo trì */}
                     {isRoomMaintenance && (
@@ -880,6 +904,20 @@ export default function ApprovalList() {
                         </div>
                         <p className="text-sm text-yellow-800">
                           Phòng <strong>{selectedRequest.roomName}</strong> đang trong trạng thái <strong>Bảo trì</strong>. 
+                          Bạn nên chuyển đơn sang phòng khác.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Alert phòng ngừng hoạt động */}
+                    {isRoomInactive && (
+                      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                        <div className="flex items-center gap-2 text-sm font-medium text-red-900 mb-2">
+                          <AlertCircle className="w-4 h-4" />
+                          <span>⚠️ Phòng đang ngừng hoạt động</span>
+                        </div>
+                        <p className="text-sm text-red-800">
+                          Phòng <strong>{selectedRequest.roomName}</strong> đang trong trạng thái <strong>Ngừng hoạt động</strong>. 
                           Bạn nên chuyển đơn sang phòng khác.
                         </p>
                       </div>
@@ -993,6 +1031,7 @@ export default function ApprovalList() {
                         <strong>Lưu ý:</strong>
                         {conflictCount > 0 && ` Nếu bạn duyệt đơn này, ${conflictCount} yêu cầu trùng lịch sẽ tự động bị từ chối.`}
                         {isRoomMaintenance && " Phòng đang bảo trì, không thể sử dụng."}
+                        {isRoomInactive && " Phòng đang ngừng hoạt động, không thể sử dụng."}
                         {isFacilityAdmin && selectedNewRoom && " Đơn này sẽ được chuyển sang phòng mới."}
                       </p>
                     </div>
@@ -1024,6 +1063,8 @@ export default function ApprovalList() {
                     setConflictList([]);
                     setSelectedNewRoom(null);
                     setAvailableRooms([]);
+                    setIsRoomMaintenance(false);
+                    setIsRoomInactive(false);
                   }}
                 >
                   Hủy

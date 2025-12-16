@@ -62,7 +62,16 @@ export default function MyBookings() {
       setBookings(Array.isArray(list) ? list : []);
     } catch (e) {
       setBookings([]);
-      setError(e?.response?.data?.message || e?.message || "Không thể tải lịch sử đặt phòng.");
+      const errorMessage = e?.response?.data?.message || 
+                          e?.response?.data?.error || 
+                          e?.message || 
+                          "Không thể tải lịch sử đặt phòng.";
+      console.error('[MyBookings.fetchMyBookings] Error details:', {
+        message: errorMessage,
+        status: e?.response?.status,
+        data: e?.response?.data
+      });
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }

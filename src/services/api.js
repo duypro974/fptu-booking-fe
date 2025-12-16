@@ -420,14 +420,30 @@ export const api = {
   },
 
   // ========== MY BOOKINGS ==========
-  // TODO: API này chưa có endpoint từ backend, cần implement sau
+  // GET /bookings/me - Xem lịch sử đặt phòng của tôi
   getMyBookings: async (userId) => {
-    throw new Error('getMyBookings API chưa được implement - cần backend endpoint');
+    try {
+      const data = await apiRequest('/bookings/me');
+      return Array.isArray(data) ? data : (data?.items ?? data?.data ?? []);
+    } catch (error) {
+      console.error('[getMyBookings] Error:', error);
+      throw error;
+    }
   },
 
-  // TODO: API này chưa có endpoint từ backend, cần implement sau
+  // PATCH /bookings/{id}/cancel - Hủy đơn đặt phòng
   cancelBooking: async (bookingId, reason) => {
-    throw new Error('cancelBooking API chưa được implement - cần backend endpoint');
+    try {
+      const payload = reason ? { reason } : {};
+      const data = await apiRequest(`/bookings/${bookingId}/cancel`, {
+        method: 'PATCH',
+        body: Object.keys(payload).length > 0 ? JSON.stringify(payload) : undefined
+      });
+      return data;
+    } catch (error) {
+      console.error('[cancelBooking] Error:', error);
+      throw error;
+    }
   },
 
   // ========== ADMIN APIs ==========

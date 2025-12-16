@@ -28,8 +28,25 @@ export const createBooking = async (payload) => {
  *  GET /bookings/me
  *  ========================= */
 export const getMyBookings = async () => {
-  const res = await api.get("/bookings/me");
-  return res.data;
+  try {
+    console.log('[bookingService.getMyBookings] Calling API /bookings/me');
+    const res = await api.get("/bookings/me");
+    console.log('[bookingService.getMyBookings] Response:', res.data);
+    return res.data;
+  } catch (error) {
+    console.error('[bookingService.getMyBookings] Error:', {
+      message: error.message,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      data: error.response?.data,
+      config: {
+        url: error.config?.url,
+        method: error.config?.method,
+        headers: error.config?.headers
+      }
+    });
+    throw error;
+  }
 };
 
 /** =========================
