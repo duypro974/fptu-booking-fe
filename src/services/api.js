@@ -14,6 +14,16 @@ import * as bookingService from './bookingService';
 console.log(`[API Config] Using REAL API`);
 
 // Tạo axios instance để các service khác dùng (api.get, api.post, etc.)
+// Tự động thêm /api nếu URL từ env không có /api ở cuối
+const getAxiosBaseUrl = () => {
+  const envUrl = import.meta.env.VITE_API_URL || "http://localhost:6969";
+  // Nếu URL không kết thúc bằng /api, thêm /api vào
+  if (!envUrl.endsWith('/api')) {
+    return envUrl.endsWith('/') ? `${envUrl}api` : `${envUrl}/api`;
+  }
+  return envUrl;
+};
+
 const axiosClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:6969/api",
   headers: { "Content-Type": "application/json" },
@@ -42,6 +52,12 @@ axiosClient.interceptors.response.use(
   (err) => Promise.reject(err)
 );
 
+// Helper: Map campus string (hcm, hn) sang campusId number cho backend
+const getCampusId = (campus) => {
+  if (typeof campus === 'number') return campus;
+  const campusMap = { hcm: 2, hn: 1, dn: 3, ct: 4, qn: 5 };
+  return campusMap[campus?.toLowerCase()] || null;
+};
 
 // Object với các methods dùng apiRequest (cho ApprovalList, etc.)
 export const api = {
@@ -146,19 +162,120 @@ export const api = {
   },
 
   // ========== ADMIN APIs ==========
-  // Re-export từ adminService để giữ backward compatibility
-  getPendingApprovals: adminService.getPendingApprovals,
-  getAllConflicts: adminService.getAllConflicts,
-  checkBookingConflicts: adminService.checkBookingConflicts,
-  approveBooking: adminService.approveBooking,
-  rejectBooking: adminService.rejectBooking,
-  getAllHistory: adminService.getAllHistory,
+  // GET /bookings/pending-approvals?campusId
+  getPendingApprovals: async (campus) => {
+    try {
+      const campusId = getCampusId(campus);
+      const params = campusId ? `?campusId=${campusId}` : '';
+      const data = await apiRequest(`/bookings/pending-approvals${params}`);
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      console.error('[getPendingApprovals] Error:', error);
+      // Nếu 404, trả về empty array
+      if (error.message?.includes('404') || error.message?.includes('Not Found')) {
+        return [];
+      }
+      throw error;
+    }
+  },
+
+  // GET /bookings/conflicts?campusId - Xem các đơn bị xung đột lịch (tất cả)
+  getAllConflicts: async (campus) => {
+    try {
+      const campusId = getCampusId(campus);
+      const params = campusId ? `?campusId=${campusId}` : '';
+      const data = await apiRequest(`/bookings/conflicts${params}`);
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      console.error('[getAllConflicts] Error:', error);
+      // Nếu 404, trả về empty array
+      if (error.message?.includes('404') || error.message?.includes('Not Found')) {
+        return [];
+      }
+      throw error;
+    }
+  },
+
+  // GET /bookings/conflicts?campusId - Xem conflicts của một booking cụ thể
+  // Lưu ý: Backend chỉ có endpoint /bookings/conflicts (lấy tất cả), không có /bookings/{id}/conflicts
+  // Nên cần gọi /bookings/conflicts và filter theo bookingId client-side
+  checkBookingConflicts: async (bookingId, campus) => {
+    try {
+      const campusId = getCampusId(campus);
+      const params = campusId ? `?campusId=${campusId}` : '';
+      // Gọi endpoint đúng: /bookings/conflicts (không có {id} trong path)
+      const allConflicts = await apiRequest(`/bookings/conflicts${params}`);
+      const conflictsArray = Array.isArray(allConflicts) ? allConflicts : [];
+      
+      // Filter conflicts liên quan đến booking này
+      // Conflict có thể có bookingId, facilityId, hoặc các field khác để match
+      const relatedConflicts = conflictsArray.filter(conflict => {
+        // Kiểm tra nếu conflict liên quan đến booking này
+        // Có thể match theo: id, bookingId, facilityId, startTime, endTime
+        return conflict.id === bookingId || 
+               conflict.bookingId === bookingId ||
+               (conflict.facilityId && conflict.facilityId === bookingId);
+      });
+      
+      console.log('[checkBookingConflicts] Found', relatedConflicts.length, 'conflicts for booking', bookingId, 'out of', conflictsArray.length, 'total conflicts');
+      return relatedConflicts;
+    } catch (error) {
+      console.error('[checkBookingConflicts] Error:', error);
+      // Nếu 404 hoặc bất kỳ lỗi nào, trả về empty array (không có conflict)
+      // Không throw error để không chặn logic tiếp theo
+      if (error.message?.includes('404') || error.message?.includes('Not Found')) {
+        console.warn('[checkBookingConflicts] 404 - Endpoint không tồn tại, giả sử không có conflict');
+      }
+      return [];
+    }
+  },
+
+  // PATCH /bookings/{id}/approve
+  approveBooking: async (bookingId, campus, adminName, alternativeFacilityId = null) => {
+    try {
+      const payload = {};
+      if (alternativeFacilityId) {
+        payload.alternativeFacilityId = alternativeFacilityId;
+      }
+      
+      const data = await apiRequest(`/bookings/${bookingId}/approve`, {
+        method: 'PATCH',
+        body: Object.keys(payload).length > 0 ? JSON.stringify(payload) : undefined
+      });
+      return data;
+    } catch (error) {
+      console.error('[approveBooking] Error:', error);
+      throw error;
+    }
+  },
+
+  // PATCH /bookings/{id}/reject
+  rejectBooking: async (bookingId, reason, adminName) => {
+    try {
+      const data = await apiRequest(`/bookings/${bookingId}/reject`, {
+        method: 'PATCH',
+        body: JSON.stringify({ reason })
+      });
+      return data;
+    } catch (error) {
+      console.error('[rejectBooking] Error:', error);
+      throw error;
+    }
+  },
 
   // ========== EQUIPMENT APIs ==========
-  // Re-export từ equipmentService để giữ backward compatibility
-  getEquipmentTypes: equipmentService.getEquipmentTypes,
-  createEquipmentType: equipmentService.createEquipmentType,
-  addEquipmentToFacility: equipmentService.addEquipmentToFacility,
+  // GET /equipment/facilities/{facilityId} - Danh sách thiết bị của phòng
+  getFacilityEquipment: async (facilityId) => {
+    try {
+      const data = await apiRequest(`/equipment/facilities/${facilityId}`);
+      // API trả về mảng string tên thiết bị: ["Máy chiếu", "Loa", "Bàn ghế"]
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      console.error('[getFacilityEquipment] Error:', error);
+      // Nếu lỗi, trả về mảng rỗng thay vì throw để không block UI
+      return [];
+    }
+  },
 };
 
 // Export default là axios instance để các service khác dùng (bookingService, resourceService, etc.)

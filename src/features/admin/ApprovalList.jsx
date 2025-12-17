@@ -1,16 +1,20 @@
-import { useEffect, useState } from "react";
-import { Check, X, Clock, Calendar, User, Building2, AlertCircle, Info, Users } from "lucide-react";
+import { useEffect, useState, useMemo } from "react";
+import { Check, X, Clock, Calendar, User, Building2, AlertCircle, Info, Users, Search, Plus } from "lucide-react";
 import { api } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import Button from "../../components/ui/Button";
 import Card from "../../components/ui/Card";
 import Badge from "../../components/ui/Badge";
 import AdminLayout, { AdminHeader, AdminContent } from "../../components/layout/AdminLayout";
+import BookingActionModal from "./BookingActionModal";
 
 export default function ApprovalList() {
   const { user } = useAuth();
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all"); // "all" hoặc tên loại phòng
+  const [facilityTypes, setFacilityTypes] = useState([]); // Danh sách tất cả loại phòng từ API
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState(null);
@@ -24,6 +28,8 @@ export default function ApprovalList() {
   const [isRoomMaintenance, setIsRoomMaintenance] = useState(false);
   const [isRoomInactive, setIsRoomInactive] = useState(false);
   const [isUsingFallback, setIsUsingFallback] = useState(false); // Track xem có đang dùng fallback không
+  const [showBookingModal, setShowBookingModal] = useState(false);
+  const [bookingFormData, setBookingFormData] = useState(null);
 
   // Chỉ Facility Admin mới có quyền chuyển phòng
   const isFacilityAdmin = user?.role === 'facility_admin' || user?.role === 'FACILITY_ADMIN';
@@ -32,6 +38,9 @@ export default function ApprovalList() {
     console.log("[ApprovalList] useEffect triggered, user:", user);
     console.log("[ApprovalList] user?.campus:", user?.campus);
     console.log("[ApprovalList] user?.campusId:", user?.campusId);
+    
+    // Load danh sách loại phòng từ API
+    loadFacilityTypes();
     
     // Nếu user có campus hoặc campusId, load data
     if (user?.campus || user?.campusId) {
@@ -42,6 +51,16 @@ export default function ApprovalList() {
       setLoading(false);
     }
   }, [user]);
+
+  const loadFacilityTypes = async () => {
+    try {
+      const types = await api.getFacilityTypes();
+      setFacilityTypes(Array.isArray(types) ? types : []);
+    } catch (error) {
+      console.error("[ApprovalList] Lỗi tải danh sách loại phòng:", error);
+      setFacilityTypes([]);
+    }
+  };
 
   const loadRequests = async () => {
     setLoading(true);
@@ -78,38 +97,93 @@ export default function ApprovalList() {
                         item.room?.name ||
                         "N/A";
         
-        // Map user name (flexible)
-        const userName = item.userName || 
-                        item.user?.name || 
-                        item.requesterName ||
-                        item.requester?.name ||
-                        item.user?.fullName ||
-                        "N/A";
+        // Map user name (flexible) - xử lý cả BookingGroup và Booking đơn lẻ
+        // Ưu tiên: item.user -> item.bookings[0].user (cho BookingGroup) -> fallback
+        let userName = "N/A";
+        if (item.user?.fullName) {
+          userName = item.user.fullName;
+        } else if (item.userName) {
+          userName = item.userName;
+        } else if (item.user?.name) {
+          userName = item.user.name;
+        } else if (item.requesterName) {
+          userName = item.requesterName;
+        } else if (item.requester?.name) {
+          userName = item.requester.name;
+        } else if (item.requester?.fullName) {
+          userName = item.requester.fullName;
+        } else if (item.bookings?.[0]?.user?.fullName) {
+          // Trường hợp BookingGroup: lấy user từ booking đầu tiên
+          userName = item.bookings[0].user.fullName;
+        } else if (item.bookings?.[0]?.user?.name) {
+          userName = item.bookings[0].user.name;
+        }
         
-        // Map user email (flexible)
-        const userEmail = item.userEmail || 
-                         item.user?.email || 
-                         item.requesterEmail ||
-                         item.requester?.email ||
-                         "";
+        // Map user email (flexible) - xử lý cả BookingGroup và Booking đơn lẻ
+        let userEmail = "";
+        if (item.user?.email) {
+          userEmail = item.user.email;
+        } else if (item.userEmail) {
+          userEmail = item.userEmail;
+        } else if (item.requesterEmail) {
+          userEmail = item.requesterEmail;
+        } else if (item.requester?.email) {
+          userEmail = item.requester.email;
+        } else if (item.bookings?.[0]?.user?.email) {
+          // Trường hợp BookingGroup: lấy email từ booking đầu tiên
+          userEmail = item.bookings[0].user.email;
+        }
         
         // Map date (extract từ startTime nếu không có date field)
         let date = item.date || item.bookingDate || item.startDate;
         if (!date && item.startTime) {
           const startDate = new Date(item.startTime);
           date = startDate.toISOString().split('T')[0]; // Format: YYYY-MM-DD
+        } else if (!date && item.bookings?.[0]?.startTime) {
+          // Trường hợp BookingGroup: lấy date từ booking đầu tiên
+          const startDate = new Date(item.bookings[0].startTime);
+          date = startDate.toISOString().split('T')[0];
         }
         
-        // Map startTime và endTime
-        const startTime = item.startTime || item.start || item.timeStart;
-        const endTime = item.endTime || item.end || item.timeEnd;
+        // Map startTime và endTime - xử lý cả BookingGroup và Booking đơn lẻ
+        let startTime = item.startTime || item.start || item.timeStart;
+        let endTime = item.endTime || item.end || item.timeEnd;
         
-        // Map participant count
-        const participantCount = item.participantCount || 
-                                item.participants || 
-                                item.numberOfParticipants ||
-                                item.attendees?.length ||
-                                null;
+        // Nếu không có startTime/endTime ở top-level, thử lấy từ bookings[0] (BookingGroup)
+        if (!startTime && item.bookings?.[0]?.startTime) {
+          startTime = item.bookings[0].startTime;
+        }
+        if (!endTime && item.bookings?.[0]?.endTime) {
+          endTime = item.bookings[0].endTime;
+        }
+        
+        // Map participant count - xử lý cả BookingGroup và Booking đơn lẻ
+        // Lưu ý: phải check !== undefined và !== null vì 0 cũng là giá trị hợp lệ
+        let participantCount = null;
+        if (item.attendeeCount !== undefined && item.attendeeCount !== null) {
+          participantCount = item.attendeeCount;
+        } else if (item.participantCount !== undefined && item.participantCount !== null) {
+          participantCount = item.participantCount;
+        } else if (item.participants !== undefined && item.participants !== null) {
+          participantCount = item.participants;
+        } else if (item.numberOfParticipants !== undefined && item.numberOfParticipants !== null) {
+          participantCount = item.numberOfParticipants;
+        } else if (item.attendees?.length !== undefined) {
+          participantCount = item.attendees.length;
+        } else if (item.bookings?.[0]?.attendeeCount !== undefined && item.bookings[0].attendeeCount !== null) {
+          // Trường hợp BookingGroup: lấy từ booking đầu tiên
+          participantCount = item.bookings[0].attendeeCount;
+        } else if (item.bookings?.[0]?.participantCount !== undefined && item.bookings[0].participantCount !== null) {
+          participantCount = item.bookings[0].participantCount;
+        }
+        
+        // Map room type (flexible)
+        const roomType = item.facility?.type?.name ||
+                        item.facilityType?.name ||
+                        item.type?.name ||
+                        item.roomType ||
+                        item.facility?.facilityType?.name ||
+                        "Unknown";
         
         return {
           ...item,
@@ -119,7 +193,8 @@ export default function ApprovalList() {
           date,
           startTime,
           endTime,
-          participantCount
+          participantCount,
+          roomType
         };
       });
       
@@ -577,7 +652,8 @@ export default function ApprovalList() {
   };
 
   const formatTime = (startTime, endTime) => {
-    if (!startTime || !endTime) return "N/A";
+    // Nếu không có startTime hoặc endTime (trường hợp BookingGroup), hiển thị "Theo lịch trình"
+    if (!startTime || !endTime) return "Theo lịch trình";
     
     try {
       // Parse ISO string hoặc Date object
@@ -599,7 +675,7 @@ export default function ApprovalList() {
       return `${startStr} - ${endStr}`;
     } catch (error) {
       console.error("[formatTime] Error:", error, { startTime, endTime });
-      return "N/A";
+      return "Theo lịch trình";
     }
   };
 
@@ -654,6 +730,27 @@ export default function ApprovalList() {
     return null;
   };
 
+  // Sử dụng danh sách tất cả loại phòng từ API (không chỉ từ requests)
+  const allTypes = useMemo(() => {
+    return facilityTypes.map(type => type.name).sort();
+  }, [facilityTypes]);
+
+  // Filter requests theo search term và type filter
+  const filteredRequests = useMemo(() => {
+    return requests.filter((req) => {
+      // Filter theo search term (tìm trong tên phòng, tên người đặt, email)
+      const matchesSearch = !searchTerm || 
+        req.roomName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        req.userName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        req.userEmail?.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      // Filter theo loại phòng
+      const matchesType = typeFilter === "all" || req.roomType === typeFilter;
+      
+      return matchesSearch && matchesType;
+    });
+  }, [requests, searchTerm, typeFilter]);
+
   return (
     <AdminLayout>
       {/* Header - Fixed */}
@@ -664,27 +761,73 @@ export default function ApprovalList() {
             <p className="text-gray-500">Xem và xử lý các yêu cầu đặt phòng đang chờ duyệt tại {user?.campusName}.</p>
           </div>
           <Badge type="warning" className="text-base px-4 py-2">
-            {requests.length} đơn chờ duyệt
+            {loading ? 0 : (searchTerm || typeFilter !== "all" ? filteredRequests.length : requests.length)} đơn chờ duyệt
           </Badge>
         </div>
       </AdminHeader>
 
       {/* Content - Scrollable */}
       <AdminContent>
+        {/* Toolbar với Search và Filter */}
+        {!loading && requests.length > 0 && (
+          <Card className="mb-4 p-4">
+            <div className="flex flex-wrap gap-3 items-center">
+              {/* Ô Tìm kiếm */}
+              <div className="relative flex-1 min-w-[200px] max-w-md">
+                <Search className="absolute left-3 top-3 text-gray-400 w-5 h-5" />
+                <input
+                  type="text"
+                  placeholder="Tìm kiếm theo tên phòng, người đặt..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+
+              {/* Lọc Loại phòng */}
+              <select
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                className="px-4 py-2 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 text-sm font-medium cursor-pointer min-w-[160px]"
+              >
+                <option value="all">Tất cả loại</option>
+                {allTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+
+              {/* Nút Tạo lịch mới */}
+              <Button
+                onClick={() => setShowBookingModal(true)}
+                className="flex items-center gap-2"
+              >
+                <Plus className="w-5 h-5" />
+                Tạo lịch mới
+              </Button>
+            </div>
+          </Card>
+        )}
+
         {/* Danh sách yêu cầu */}
         {loading ? (
           <div className="text-center py-20">
             <div className="animate-spin w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full mx-auto mb-4"></div>
             <p className="text-gray-400">Đang tải dữ liệu...</p>
           </div>
-        ) : requests.length === 0 ? (
+        ) : filteredRequests.length === 0 ? (
           <Card className="text-center py-12">
             <Clock className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-            <p className="text-gray-500 text-lg">Hiện không có yêu cầu nào cần xử lý.</p>
+            <p className="text-gray-500 text-lg">
+              {requests.length === 0 
+                ? "Hiện không có yêu cầu nào cần xử lý."
+                : "Không tìm thấy yêu cầu nào phù hợp với bộ lọc."}
+            </p>
           </Card>
         ) : (
           <div className="space-y-4">
-            {requests.map((req, index) => (
+            {filteredRequests.map((req, index) => (
               <Card key={req.id} className={`p-6 hover:shadow-md transition-shadow ${index === 0 ? 'border-2 border-green-200 bg-green-50/30' : ''}`}>
                 <div className="flex flex-col lg:flex-row gap-6">
                   {/* Thông tin chính */}
@@ -737,7 +880,7 @@ export default function ApprovalList() {
                           <span>Số người tham gia</span>
                         </div>
                         <p className="font-medium text-gray-900">
-                          {req.participantCount !== null && req.participantCount !== undefined 
+                          {req.participantCount !== null && req.participantCount !== undefined && req.participantCount !== ""
                             ? `${req.participantCount} người` 
                             : "N/A"}
                         </p>
@@ -1080,6 +1223,29 @@ export default function ApprovalList() {
           </div>
         </div>
       )}
+
+      {/* Booking Action Modal */}
+      <BookingActionModal
+        isOpen={showBookingModal}
+        onClose={() => {
+          setShowBookingModal(false);
+          setBookingFormData(null);
+        }}
+        onSuccess={async (result) => {
+          console.log("[ApprovalList] Booking created successfully:", result);
+          try {
+            // Reload danh sách yêu cầu
+            await loadRequests();
+          } catch (error) {
+            console.error("[ApprovalList] Error reloading requests after booking creation:", error);
+            // Không throw để không ảnh hưởng đến UI
+            // User có thể tự reload trang nếu cần
+          }
+          setShowBookingModal(false);
+          setBookingFormData(null);
+        }}
+        bookingData={bookingFormData}
+      />
     </AdminLayout>
   );
 }

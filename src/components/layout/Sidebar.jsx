@@ -46,7 +46,6 @@ export default function Sidebar({ isOpen }) {
   ];
 
   const FACILITY_ADMIN_MENU = [
-    { icon: Globe, label: "Toàn hệ thống", path: "/admin-facility" },
     { icon: CheckSquare, label: "Duyệt yêu cầu", path: "/admin-facility/approvals" },
     { icon: Shield, label: "Quản lý Phòng", path: "/admin-facility/rooms" },
     { icon: Package, label: "Quản lý Thiết bị", path: "/admin-facility/equipment" },
@@ -60,7 +59,6 @@ export default function Sidebar({ isOpen }) {
   ];
 
   const SYSTEM_ADMIN_MENU = [
-    { icon: Globe, label: "Toàn hệ thống", path: "/admin" },
     { icon: Users, label: "Quản lý Tài khoản", path: "/admin/users" },
   ];
 

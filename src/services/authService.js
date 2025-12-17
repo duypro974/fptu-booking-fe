@@ -1,7 +1,17 @@
 // src/services/authService.js
 import axios from "axios";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:6969/api";
+// Tự động thêm /api nếu URL từ env không có /api ở cuối
+const getBaseUrl = () => {
+  const envUrl = import.meta.env.VITE_API_URL || "http://localhost:6969";
+  // Nếu URL không kết thúc bằng /api, thêm /api vào
+  if (!envUrl.endsWith('/api')) {
+    return envUrl.endsWith('/') ? `${envUrl}api` : `${envUrl}/api`;
+  }
+  return envUrl;
+};
+
+const API_BASE_URL = getBaseUrl();
 
 const axiosClient = axios.create({
   baseURL: API_BASE_URL,

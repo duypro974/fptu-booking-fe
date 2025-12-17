@@ -227,3 +227,45 @@ export const getAllHistory = async (campusId) => {
   }
 };
 
+// GET /bookings/conflicts?facilityId={id}&startTime={time}&endTime={time}
+// Kiểm tra xung đột lịch đặt phòng
+export const checkConflicts = async (facilityId, startTime, endTime) => {
+  try {
+    const params = new URLSearchParams();
+    params.append('facilityId', facilityId);
+    params.append('startTime', startTime);
+    params.append('endTime', endTime);
+    
+    console.log('[checkConflicts] Calling API with params:', { facilityId, startTime, endTime });
+    const data = await apiRequest(`/bookings/conflicts?${params.toString()}`);
+    console.log('[checkConflicts] API response:', data);
+    console.log('[checkConflicts] Response type:', Array.isArray(data) ? 'array' : typeof data);
+    if (Array.isArray(data) && data.length > 0) {
+      console.log('[checkConflicts] First conflict sample:', data[0]);
+      console.log('[checkConflicts] First conflict keys:', Object.keys(data[0]));
+    }
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.error('[checkConflicts] Error:', error);
+    // Nếu 404, trả về empty array (không có conflict)
+    if (error.message?.includes('404') || error.message?.includes('Not Found')) {
+      return [];
+    }
+    throw error;
+  }
+};
+
+// PATCH /bookings/{id}/reject - Reject booking với lý do
+export const rejectBookingWithReason = async (bookingId, reason) => {
+  try {
+    const data = await apiRequest(`/bookings/${bookingId}/reject`, {
+      method: 'PATCH',
+      body: JSON.stringify({ reason })
+    });
+    return data;
+  } catch (error) {
+    console.error('[rejectBookingWithReason] Error:', error);
+    throw error;
+  }
+};
+
