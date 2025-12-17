@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { History, Search, Filter, Building2, Package, Users, Eye, Calendar } from "lucide-react";
-import { api } from "../../services/api";
+import { getAllHistory } from "../../services/adminService";
 import { useAuth } from "../../context/AuthContext";
 import Card from "../../components/ui/Card";
 import Badge from "../../components/ui/Badge";
@@ -31,7 +31,7 @@ export default function HistoryLog() {
     setLoading(true);
     try {
       console.log('[HistoryLog] Loading history with campusId:', campusId);
-      const data = await api.getAllHistory(campusId);
+      const data = await getAllHistory(campusId);
       console.log('[HistoryLog] Received history data:', data?.length || 0, 'items');
       setHistory(data || []);
     } catch (error) {

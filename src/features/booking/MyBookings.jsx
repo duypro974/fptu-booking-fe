@@ -33,11 +33,11 @@ const statusMeta = (status) => {
 
 // ===== SLOT DEFINITIONS (CỨNG) =====
 const SLOT_DEFS = [
-  { id: 1, start: "07:00", end: "08:30" },
-  { id: 2, start: "08:30", end: "10:00" },
-  { id: 3, start: "10:00", end: "11:30" },
-  { id: 4, start: "11:30", end: "13:00" },
-  { id: 5, start: "13:00", end: "14:30" },
+  { id: 1, start: "07:00", end: "09:00" },
+  { id: 2, start: "09:00", end: "11:00" },
+  { id: 3, start: "11:00", end: "13:00" },
+  { id: 4, start: "13:00", end: "15:00" },
+  { id: 5, start: "15:00", end: "17:00" },
 ];
 
 const toDateSafe = (value) => {

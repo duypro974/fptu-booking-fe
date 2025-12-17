@@ -37,8 +37,12 @@ const DEFAULT_SLOTS = [
   { id: 5, start: "15:00", end: "17:00", label: "Slot 5" },
 ];
 
+const normalizeRole = (r) => String(r || "").toUpperCase();
+const isAdminRole = (role) => ["FACILITY_ADMIN", "CAMPUS_ADMIN"].includes(normalizeRole(role));
+
 export default function FacilitySearchByDate() {
   const { user } = useAuth();
+  const isAdmin = isAdminRole(user?.role);
 
   const [selectedDate, setSelectedDate] = useState(() => toLocalYMD(new Date()));
   const [keyword, setKeyword] = useState("");
@@ -134,7 +138,6 @@ export default function FacilitySearchByDate() {
         date: selectedDate,
         slot: selectedSlotObj.id,
         typeId: typeId ? Number(typeId) : undefined,
-        // capacity: undefined, // bạn có thể thêm filter nếu muốn
       });
 
       const list = Array.isArray(data) ? data : data?.items ?? data?.data ?? [];
@@ -216,10 +219,13 @@ export default function FacilitySearchByDate() {
 
     if (!selectedSlotObj) return false; // chưa chọn slot -> không disable theo booking
 
-    // slot đang diễn ra/đã qua giờ -> disable hết
+    // slot đang diễn ra/đã qua giờ -> disable hết (AI CŨNG KHÔNG ĐẶT ĐƯỢC)
     if (slotExpired(selectedSlotObj) || slotOngoing(selectedSlotObj)) return true;
 
-    // đã chọn slot -> nếu room không nằm trong list available => đã bị book => disable
+    // ✅ ADMIN: cho phép bấm phòng dù conflict (để BE xử lý "đè")
+    if (isAdmin) return false;
+
+    // user thường: disable theo availability
     if (availableRoomIds && availableRoomIds.size > 0) {
       return !availableRoomIds.has(room.id);
     }
@@ -235,9 +241,11 @@ export default function FacilitySearchByDate() {
           <CalendarDays className="w-6 h-6 text-orange-600" />
           <h1 className="text-2xl font-bold text-gray-900">Tìm & đặt phòng theo ngày — {campusLabel}</h1>
         </div>
+
         <p className="text-gray-500">
           Chọn ngày + slot (tuỳ chọn). Ngày quá khứ / slot đã qua giờ / slot đang diễn ra sẽ bị chặn.
           {selectedSlotObj ? " • Chọn slot sẽ tự disable phòng đã được đặt." : ""}
+          {isAdmin ? " • Bạn là Admin: có thể đặt đè (BE sẽ xử lý hủy các đơn xung đột)." : ""}
         </p>
 
         <div className="mt-5 grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
@@ -338,7 +346,12 @@ export default function FacilitySearchByDate() {
         <div>
           <div className="mb-3 text-sm text-gray-600">
             Kết quả ngày <span className="font-semibold text-gray-900">{selectedDate}</span>
-            {slotId ? <> • <span className="font-semibold text-gray-900">Slot {slotId}</span></> : null}
+            {slotId ? (
+              <>
+                {" "}
+                • <span className="font-semibold text-gray-900">Slot {slotId}</span>
+              </>
+            ) : null}
             : <span className="font-semibold text-gray-900">{filteredRooms.length}</span> phòng
           </div>
 
@@ -370,7 +383,7 @@ export default function FacilitySearchByDate() {
                         alt={room.name}
                         className="w-full h-full object-cover"
                       />
-                      <div className="absolute top-3 right-3">
+                      <div className="absolute top-3 right-3 flex gap-2">
                         {(() => {
                           const typeName = room.typeName || room.type?.name || room.type || "PHÒNG";
                           const typeColor = getRoomTypeColor(typeName);
@@ -380,11 +393,23 @@ export default function FacilitySearchByDate() {
                             </span>
                           );
                         })()}
+
+                        {isAdmin && selectedSlotObj && (
+                          <span className="px-3 py-1 rounded-full text-xs font-semibold bg-black/70 text-white shadow-sm">
+                            Admin (có thể đè)
+                          </span>
+                        )}
                       </div>
 
                       {disabled && selectedSlotObj && (
                         <div className="absolute bottom-3 left-3 bg-black/60 text-white text-xs px-2 py-1 rounded">
                           Không thể đặt slot này
+                        </div>
+                      )}
+
+                      {!disabled && isAdmin && selectedSlotObj && (
+                        <div className="absolute bottom-3 left-3 bg-orange-600/90 text-white text-xs px-2 py-1 rounded">
+                          Có thể đặt đè (BE xử lý)
                         </div>
                       )}
                     </div>
@@ -439,6 +464,9 @@ export default function FacilitySearchByDate() {
 }
 
 function RoomBookingModal({ room, campusLabel, selectedDate, preselectedSlotId, onClose }) {
+  const { user } = useAuth();
+  const isAdmin = isAdminRole(user?.role);
+
   const todayYMD = toLocalYMD(new Date());
   const isToday = selectedDate === todayYMD;
 
@@ -478,7 +506,6 @@ function RoomBookingModal({ room, campusLabel, selectedDate, preselectedSlotId, 
             const data = await searchAvailableRooms({
               date: selectedDate,
               slot: slot.id,
-              // typeId/capacity không bắt buộc, vì ta chỉ cần biết room.id có nằm trong list available hay không
             });
 
             const list = Array.isArray(data) ? data : data?.items ?? data?.data ?? [];
@@ -509,7 +536,11 @@ function RoomBookingModal({ room, campusLabel, selectedDate, preselectedSlotId, 
 
   const isSlotDisabled = (slot) => {
     if (slotExpired(slot) || slotOngoing(slot)) return true;
-    if (unavailableSlotIds.has(slot.id)) return true; // đã có người book slot này cho phòng này
+
+    // ✅ ADMIN: không disable slot vì conflict (để BE xử lý đè)
+    if (isAdmin) return false;
+
+    if (unavailableSlotIds.has(slot.id)) return true; // user thường: slot đã có người book
     return false;
   };
 
@@ -552,6 +583,13 @@ function RoomBookingModal({ room, campusLabel, selectedDate, preselectedSlotId, 
             <div className="text-sm text-gray-500">
               {campusLabel} • Ngày: <span className="font-semibold text-gray-900">{selectedDate}</span>
             </div>
+
+            {isAdmin && (
+              <div className="text-xs text-orange-700 mt-1">
+                Admin: có thể chọn slot đang có booking, hệ thống sẽ xử lý “đặt đè” ở backend.
+              </div>
+            )}
+
             {checkingSlots && (
               <div className="text-xs text-gray-500 mt-1">Đang kiểm tra slot còn trống...</div>
             )}
@@ -574,13 +612,16 @@ function RoomBookingModal({ room, campusLabel, selectedDate, preselectedSlotId, 
                 const expired = slotExpired(slot);
                 const ongoing = slotOngoing(slot);
                 const booked = unavailableSlotIds.has(slot.id);
-                const disabled = expired || ongoing || booked;
+
+                // ✅ admin: booked không làm disabled
+                const disabled = expired || ongoing || (!isAdmin && booked);
                 const isSelected = selectedSlots.includes(slot.id);
 
                 let title = "";
                 if (expired) title = "Slot đã qua giờ";
                 else if (ongoing) title = "Slot đang diễn ra";
-                else if (booked) title = "Slot đã có người đặt";
+                else if (booked && !isAdmin) title = "Slot đã có người đặt";
+                else if (booked && isAdmin) title = "Admin có thể đặt đè";
 
                 return (
                   <button
@@ -589,20 +630,28 @@ function RoomBookingModal({ room, campusLabel, selectedDate, preselectedSlotId, 
                     disabled={disabled}
                     className={`
                       p-4 rounded-lg border-2 text-center transition-all
-                      ${disabled
-                        ? "bg-gray-100 border-gray-200 cursor-not-allowed opacity-60"
-                        : isSelected
-                        ? "bg-orange-500 border-orange-600 text-white"
-                        : "bg-gray-50 border-gray-200 hover:border-orange-300 hover:bg-orange-50"
+                      ${
+                        disabled
+                          ? "bg-gray-100 border-gray-200 cursor-not-allowed opacity-60"
+                          : isSelected
+                          ? "bg-orange-500 border-orange-600 text-white"
+                          : booked && isAdmin
+                          ? "bg-orange-50 border-orange-300 hover:bg-orange-100"
+                          : "bg-gray-50 border-gray-200 hover:border-orange-300 hover:bg-orange-50"
                       }
                     `}
                     title={title}
                   >
                     <div className="text-xs font-semibold mb-1">{slot.label}</div>
-                    <div className="text-xs">{slot.start} - {slot.end}</div>
+                    <div className="text-xs">
+                      {slot.start} - {slot.end}
+                    </div>
+
                     {expired && <div className="text-[11px] mt-1 text-gray-600">Đã qua giờ</div>}
                     {!expired && ongoing && <div className="text-[11px] mt-1 text-gray-600">Đang diễn ra</div>}
-                    {!expired && !ongoing && booked && <div className="text-[11px] mt-1 text-gray-600">Đã đặt</div>}
+
+                    {!expired && !ongoing && booked && !isAdmin && <div className="text-[11px] mt-1 text-gray-600">Đã đặt</div>}
+                    {!expired && !ongoing && booked && isAdmin && <div className="text-[11px] mt-1 text-orange-700">Có thể đè</div>}
                   </button>
                 );
               })}

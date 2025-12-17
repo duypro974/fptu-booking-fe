@@ -1,29 +1,27 @@
-// api.js (updated)
+// api.js (fixed - keep original logic)
 
-// API Configuration
-export const API_BASE_URL =
-  import.meta.env.VITE_API_URL || "http://localhost:6969/api";
 // Tự động thêm /api nếu URL từ env không có /api ở cuối
 const getBaseUrl = () => {
-  const envUrl = import.meta.env.VITE_API_URL || 'http://localhost:6969';
-  // Nếu URL không kết thúc bằng /api, thêm /api vào
-  if (!envUrl.endsWith('/api')) {
-    const finalUrl = envUrl.endsWith('/') ? `${envUrl}api` : `${envUrl}/api`;
+  const envUrl = import.meta.env.VITE_API_URL || "http://localhost:6969";
+
+  if (!envUrl.endsWith("/api")) {
+    const finalUrl = envUrl.endsWith("/") ? `${envUrl}api` : `${envUrl}/api`;
     console.log(`[API Config] Auto-added /api to URL: ${envUrl} -> ${finalUrl}`);
     return finalUrl;
   }
+
   console.log(`[API Config] Using API URL: ${envUrl}`);
   return envUrl;
 };
 
+// ✅ Chỉ khai báo 1 lần
 export const API_BASE_URL = getBaseUrl();
 
-// Import để dùng trong api.js
+// Nếu project đang import cái tên này ở nơi khác thì giữ lại
 export { API_BASE_URL as API_BASE_URL_EXPORT };
 
 // Helper function để lấy token từ localStorage
 export const getAuthToken = () => {
-  // Token được lưu riêng trong 'access_token' (theo authService.js)
   return localStorage.getItem("access_token");
 };
 
@@ -38,12 +36,16 @@ export const apiRequest = async (endpoint, options = {}) => {
   };
 
   if (token) {
+    // ✅ Set 1 lần thôi
     headers["Authorization"] = `Bearer ${token}`;
-    headers['Authorization'] = `Bearer ${token}`;
-    // Log token info (không log toàn bộ token vì bảo mật)
-    console.log('[apiRequest] Token found, length:', token.length, 'first 10 chars:', token.substring(0, 10) + '...');
+    console.log(
+      "[apiRequest] Token found, length:",
+      token.length,
+      "first 10 chars:",
+      token.substring(0, 10) + "..."
+    );
   } else {
-    console.warn('[apiRequest] ⚠️ No token found in localStorage!');
+    console.warn("[apiRequest] ⚠️ No token found in localStorage!");
   }
 
   // Timeout 30 giây
@@ -58,12 +60,6 @@ export const apiRequest = async (endpoint, options = {}) => {
       token ? "Yes" : "No"
     );
 
-    /**
-     * IMPORTANT:
-     * - Không tự set 'Cache-Control/Pragma/Expires' ở request headers trong browser
-     *   vì dễ gây CORS preflight fail nếu backend không allow các header này.
-     * - Dùng fetch option `cache: 'no-cache'` là đủ để hạn chế cache ở phía browser.
-     */
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
       signal: controller.signal,
@@ -72,7 +68,11 @@ export const apiRequest = async (endpoint, options = {}) => {
     });
 
     clearTimeout(timeoutId);
-    console.log("[apiRequest] Response status:", response.status, response.statusText);
+    console.log(
+      "[apiRequest] Response status:",
+      response.status,
+      response.statusText
+    );
 
     // Xử lý lỗi HTTP
     if (!response.ok) {
@@ -85,38 +85,39 @@ export const apiRequest = async (endpoint, options = {}) => {
 
       // 403: không có quyền / token không hợp lệ
       if (response.status === 403) {
+        console.error(
+          "[apiRequest] 403 Forbidden - Token có thể không hợp lệ hoặc không có quyền"
+        );
+        console.error("[apiRequest] Endpoint:", endpoint);
+        console.error("[apiRequest] Token exists:", !!token);
+
         const errorData = await response
           .json()
-          .catch(() => ({ message: "Token không hợp lệ hoặc đã hết hạn." }));
-        throw new Error(
+          .catch(() => ({ message: "Bạn không có quyền thực hiện thao tác này." }));
+
+        const errorMessage =
           errorData.message ||
-            "Bạn không có quyền thực hiện thao tác này. Vui lòng đăng nhập lại."
-        );
-        // Token không hợp lệ hoặc không có quyền
-        console.error('[apiRequest] 403 Forbidden - Token có thể không hợp lệ hoặc không có quyền');
-        console.error('[apiRequest] Endpoint:', endpoint);
-        console.error('[apiRequest] Token exists:', !!token);
-        
-        const errorData = await response.json().catch(() => ({ message: 'Bạn không có quyền thực hiện thao tác này.' }));
-        const errorMessage = errorData.message || 'Bạn không có quyền thực hiện thao tác này.';
-        
-        // Chỉ clear token và redirect nếu error message chỉ ra là lỗi authentication
-        // Nếu chỉ là lỗi permission (không có quyền), không redirect
-        if (errorMessage.includes('Token') || errorMessage.includes('token') || errorMessage.includes('đăng nhập lại')) {
-          // Clear token và user data
-          localStorage.removeItem('fptu_user');
-          localStorage.removeItem('access_token');
-          
-          // Redirect về login nếu đang ở client-side
-          if (typeof window !== 'undefined') {
-            // Chỉ redirect nếu không phải đang ở trang login
-            if (!window.location.pathname.includes('/login')) {
-              console.warn('[apiRequest] Redirecting to login due to 403 authentication error');
-              window.location.href = '/login';
+          "Bạn không có quyền thực hiện thao tác này. Vui lòng đăng nhập lại.";
+
+        // Chỉ clear token + redirect nếu giống lỗi auth (không phải chỉ permission)
+        if (
+          errorMessage.includes("Token") ||
+          errorMessage.includes("token") ||
+          errorMessage.includes("đăng nhập lại")
+        ) {
+          localStorage.removeItem("fptu_user");
+          localStorage.removeItem("access_token");
+
+          if (typeof window !== "undefined") {
+            if (!window.location.pathname.includes("/login")) {
+              console.warn(
+                "[apiRequest] Redirecting to login due to 403 authentication error"
+              );
+              window.location.href = "/login";
             }
           }
         }
-        
+
         throw new Error(errorMessage);
       }
 
@@ -133,7 +134,6 @@ export const apiRequest = async (endpoint, options = {}) => {
     // Nếu response không phải JSON (hiếm), tránh crash
     const contentType = response.headers.get("content-type") || "";
     if (!contentType.includes("application/json")) {
-      // Bạn có thể đổi sang return response.text() nếu backend trả text
       return null;
     }
 
@@ -143,11 +143,12 @@ export const apiRequest = async (endpoint, options = {}) => {
 
     // Timeout
     if (error?.name === "AbortError") {
-      throw new Error("TIMEOUT_ERROR: Request timeout sau 30 giây. Vui lòng thử lại.");
+      throw new Error(
+        "TIMEOUT_ERROR: Request timeout sau 30 giây. Vui lòng thử lại."
+      );
     }
 
     // Lỗi network (fetch failed)
-    // Trên Chrome/Edge thường message là "Failed to fetch"
     if (error?.name === "TypeError") {
       const msg = String(error.message || "");
       if (msg.toLowerCase().includes("fetch")) {

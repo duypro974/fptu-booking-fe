@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Edit2, Trash2, Search, Package, Building2, Eye, History } from "lucide-react";
 import { api } from "../../services/api";
@@ -14,32 +15,27 @@ import {
   addEquipmentToFacility,
   updateFacilityEquipment,
   removeFacilityEquipment,
+  getFacilityEquipmentHistory,
 } from "../../services/equipmentService";
 
+/** =========================
+ *  CONDITION + STATUS
+ *  UI: GOOD | POOR
+ *  API: good | poor
+ *  ========================= */
 const toApiCondition = (uiCondition) => {
-  const c = (uiCondition || "GOOD").toString().toLowerCase();
-  if (c === "good" || c === "fair" || c === "poor") return c;
-  if (uiCondition === "FAIR") return "fair";
-  if (uiCondition === "POOR") return "poor";
-  return "good";
+  const c = (uiCondition || "GOOD").toString().toUpperCase();
+  return c === "POOR" ? "poor" : "good";
 };
 
 const toUiCondition = (apiCondition) => {
   const c = (apiCondition || "good").toString().toLowerCase();
-  if (c === "fair") return "FAIR";
-  if (c === "poor") return "POOR";
-  return "GOOD";
+  return c === "poor" ? "POOR" : "GOOD";
 };
 
-/** ✅ Hiển thị condition sang tiếng Việt */
-const hienThiTinhTrang = (uiCondition) => {
-  if (uiCondition === "FAIR") return "Khá";
-  if (uiCondition === "POOR") return "Kém";
-  return "Tốt";
-};
+const displayConditionVi = (uiCondition) => (uiCondition === "POOR" ? "Kém" : "Tốt");
 
-const hienThiDanhMuc = (value) => {
-  // value backend có thể là Visual/Audio/Network/General
+const displayCategoryVi = (value) => {
   const v = (value || "").toString().toLowerCase();
   if (v === "visual") return "Hình ảnh";
   if (v === "audio") return "Âm thanh";
@@ -48,47 +44,54 @@ const hienThiDanhMuc = (value) => {
   return value || "-";
 };
 
+const statusFromCondition = (uiCondition) => (uiCondition === "POOR" ? "repair" : "available");
+const displayStatusVi = (status) => (status === "repair" ? "Sửa chữa" : "Sẵn sàng");
+const badgeTypeFromStatus = (status) => (status === "repair" ? "warning" : "success");
+
+const isFiniteNumber = (v) => Number.isFinite(Number(v));
+const toNumberOrNull = (v) => (isFiniteNumber(v) ? Number(v) : null);
+
 export default function EquipmentManagement() {
   const { user } = useAuth();
 
-  // types = quản lý loại thiết bị
-  // instances = quản lý thiết bị theo phòng
-  const [cheDoXem, setCheDoXem] = useState("types");
-  const [phongDangChon, setPhongDangChon] = useState("");
+  const [viewMode, setViewMode] = useState("types"); // types | instances
+  const [selectedRoomId, setSelectedRoomId] = useState("");
 
-  const [danhSachHienThi, setDanhSachHienThi] = useState([]);
-  const [danhSachPhong, setDanhSachPhong] = useState([]);
-  const [danhSachLoaiThietBi, setDanhSachLoaiThietBi] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [rooms, setRooms] = useState([]);
+  const [equipmentTypes, setEquipmentTypes] = useState([]);
 
-  const [dangTai, setDangTai] = useState(true);
-  const [tuKhoa, setTuKhoa] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [keyword, setKeyword] = useState("");
 
-  const [hienModalThem, setHienModalThem] = useState(false);
-  const [hienModalChiTiet, setHienModalChiTiet] = useState(false);
-  const [thietBiDangChon, setThietBiDangChon] = useState(null);
+  const [showUpsertModal, setShowUpsertModal] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [selectedItem, setSelectedItem] = useState(null);
 
-  const [lichSuThietBi, setLichSuThietBi] = useState([]);
-  const [tabChiTiet, setTabChiTiet] = useState("thong_tin"); // "thong_tin" | "lich_su"
+  const [detailTab, setDetailTab] = useState("info"); // info | history
+  const [editingItem, setEditingItem] = useState(null);
 
-  const [dangSua, setDangSua] = useState(null);
-
-  const [duLieuForm, setDuLieuForm] = useState({
+  const [formData, setFormData] = useState({
     name: "",
     equipmentTypeId: "",
     roomId: "",
     quantity: "",
-    condition: "GOOD", // UI: GOOD/FAIR/POOR
+    condition: "GOOD",
     description: "",
   });
 
-  const [hienModalTaoLoai, setHienModalTaoLoai] = useState(false);
-  const [duLieuLoai, setDuLieuLoai] = useState({
+  const [editNote, setEditNote] = useState("");
+  const [showCreateTypeModal, setShowCreateTypeModal] = useState(false);
+  const [typeFormData, setTypeFormData] = useState({
     name: "",
     iconUrl: "",
     category: "General",
   });
 
-  const xacDinhCampusId = useCallback(() => {
+  const [selectedRoomName, setSelectedRoomName] = useState("");
+  const [itemHistory, setItemHistory] = useState([]);
+
+  const resolveCampusId = useCallback(() => {
     let campusId = null;
 
     if (user?.campusId) campusId = user.campusId;
@@ -98,240 +101,315 @@ export default function EquipmentManagement() {
       campusId = campusMap[user.campus.toLowerCase()] || null;
     }
 
-    if (!campusId) campusId = 2; // mặc định HCM nếu thiếu
+    if (!campusId) campusId = 2;
     return campusId;
   }, [user]);
 
-  const taiDuLieuNen = useCallback(async () => {
+  /** =========================
+   *  BASE DATA: rooms + (initial) types
+   *  ========================= */
+  const loadBaseData = useCallback(async () => {
     if (!user?.campus && !user?.campusId) {
-      setDangTai(false);
+      setLoading(false);
       return;
     }
 
-    setDangTai(true);
+    setLoading(true);
     try {
-      const campusId = xacDinhCampusId();
+      const campusId = resolveCampusId();
 
       const [roomsData, typesData] = await Promise.all([
         api.getRooms({ campusId, includeInactive: true, allStatuses: true }),
         getEquipmentTypes().catch(() => []),
       ]);
 
-      const rooms = Array.isArray(roomsData) ? roomsData : [];
-      const types = Array.isArray(typesData) ? typesData : [];
+      const nextRooms = Array.isArray(roomsData) ? roomsData : [];
+      const nextTypes = Array.isArray(typesData) ? typesData : [];
 
-      setDanhSachPhong(rooms);
-      setDanhSachLoaiThietBi(types);
+      setRooms(nextRooms);
+      setEquipmentTypes(nextTypes);
 
-      // chọn phòng đầu tiên nếu đang ở chế độ theo phòng mà chưa chọn
-      if (!phongDangChon && rooms[0]?.id) {
-        setPhongDangChon(String(rooms[0].id));
-      }
+      setSelectedRoomId((prev) => (prev ? prev : nextRooms[0]?.id ? String(nextRooms[0].id) : ""));
     } finally {
-      setDangTai(false);
+      setLoading(false);
     }
-  }, [phongDangChon, user, xacDinhCampusId]);
+  }, [resolveCampusId, user]);
 
-  const taiDanhSachHienThi = useCallback(async () => {
-    setDangTai(true);
+  useEffect(() => {
+    loadBaseData();
+  }, [loadBaseData]);
+
+  /** =========================
+   *  LOAD TYPES (NO LOOP)
+   *  - IMPORTANT: does NOT depend on equipmentTypes
+   *  ========================= */
+  const loadTypes = useCallback(async () => {
+    setLoading(true);
     try {
-      if (cheDoXem === "types") {
-        /** ✅ FIX LOOP: không gọi getEquipmentTypes ở đây nữa, dùng state đã load ở taiDuLieuNen */
-        const types = danhSachLoaiThietBi;
+      const types = await getEquipmentTypes().catch(() => []);
+      const safeTypes = Array.isArray(types) ? types : [];
+      setEquipmentTypes(safeTypes);
 
-        const rows = (types || []).map((t) => ({
+      setRows(
+        safeTypes.map((t) => ({
           id: t.id ?? t._id ?? `${t.name}-${Math.random()}`,
-          name: t.name ?? "Không rõ",
+          name: t.name ?? "Unknown",
           category: t.category ?? "",
           iconUrl: t.iconUrl ?? "",
+          equipmentTypeId: t.id ?? t._id,
+          isType: true,
+
           roomId: null,
           roomName: null,
           quantity: null,
+          condition: null,
+          _apiCondition: null,
           status: "available",
           description: t.description ?? "",
-          equipmentTypeId: t.id ?? t._id,
-          isType: true,
-          condition: null,
-        }));
+        }))
+      );
 
-        setDanhSachHienThi(rows);
+      setSelectedRoomName("");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  /** =========================
+   *  LOAD INSTANCES
+   *  - depends on equipmentTypes for mapping names
+   *  ========================= */
+  const loadInstances = useCallback(async () => {
+    setLoading(true);
+    try {
+      if (!selectedRoomId) {
+        setRows([]);
+        setSelectedRoomName("");
         return;
       }
 
-      // cheDoXem === "instances"
-      if (!phongDangChon) {
-        setDanhSachHienThi([]);
-        return;
-      }
-
-      const facilityId = Number(phongDangChon);
+      const facilityId = Number(selectedRoomId);
       const res = await getEquipmentsByFacility(facilityId);
+
       const facility = res?.facility ?? null;
       const list = Array.isArray(res?.equipment) ? res.equipment : [];
 
-      const roomFallback = danhSachPhong.find((r) => String(r.id) === String(phongDangChon));
-      const roomName = facility?.name ?? roomFallback?.name ?? `Phòng ${facilityId}`;
+      const fallbackRoom = rooms.find((r) => String(r.id) === String(selectedRoomId));
+      const roomName = facility?.name ?? fallbackRoom?.name ?? `Phòng ${facilityId}`;
+      setSelectedRoomName(roomName);
 
-      const rows = list.map((it) => {
+      const mapped = list.map((it) => {
         const typeId = it.equipmentTypeId ?? it.typeId ?? it.equipment_type_id;
-        const foundType = danhSachLoaiThietBi.find((t) => String(t.id ?? t._id) === String(typeId));
+        const foundType = equipmentTypes.find((t) => String(t.id ?? t._id) === String(typeId));
+
+        const uiCondition = toUiCondition(it.condition);
+        const status = statusFromCondition(uiCondition);
 
         return {
           id: it.id ?? it._id ?? `${typeId}-${(it.condition || "good")}-${Math.random()}`,
-          name: foundType?.name ?? it.name ?? "Thiết bị",
+          name: foundType?.name ?? it.name ?? "Equipment",
           category: foundType?.category ?? it.category ?? "",
           iconUrl: foundType?.iconUrl ?? it.iconUrl ?? "",
-          roomId: facility?.id ?? roomFallback?.id ?? facilityId,
-          roomName,
-          quantity: it.quantity ?? it.qty ?? 0,
-          status: it.status ?? "available",
-          description: it.description ?? "",
           equipmentTypeId: typeId ?? null,
           isType: false,
-          condition: toUiCondition(it.condition),
-          // để update/delete: cần condition dạng api nữa
+
+          roomId: facility?.id ?? fallbackRoom?.id ?? facilityId,
+          roomName,
+          quantity: it.quantity ?? it.qty ?? 0,
+          description: it.description ?? "",
+
+          condition: uiCondition,
           _apiCondition: (it.condition ?? "good").toString().toLowerCase(),
+          status,
         };
       });
 
-      setDanhSachHienThi(rows);
+      setRows(mapped);
     } finally {
-      setDangTai(false);
+      setLoading(false);
     }
-  }, [cheDoXem, phongDangChon, danhSachPhong, danhSachLoaiThietBi]);
+  }, [selectedRoomId, rooms, equipmentTypes]);
+
+  /** =========================
+   *  EFFECTS: split by viewMode (avoid loop)
+   *  ========================= */
+  useEffect(() => {
+    if (viewMode === "types") loadTypes();
+  }, [viewMode, loadTypes]);
 
   useEffect(() => {
-    taiDuLieuNen();
-  }, [taiDuLieuNen]);
+    if (viewMode === "instances") loadInstances();
+  }, [viewMode, loadInstances]);
 
-  useEffect(() => {
-    taiDanhSachHienThi();
-  }, [taiDanhSachHienThi]);
+  const reloadCurrentView = useCallback(async () => {
+    if (viewMode === "types") return loadTypes();
+    return loadInstances();
+  }, [viewMode, loadTypes, loadInstances]);
 
-  const danhSachLoc = useMemo(() => {
-    const term = tuKhoa.trim().toLowerCase();
-    if (!term) return danhSachHienThi;
+  const filteredRows = useMemo(() => {
+    const term = keyword.trim().toLowerCase();
+    if (!term) return rows;
 
-    return danhSachHienThi.filter((item) => {
+    return rows.filter((item) => {
       const name = (item.name || "").toLowerCase();
       const category = (item.category || "").toLowerCase();
       const roomName = (item.roomName || "").toLowerCase();
       return name.includes(term) || category.includes(term) || roomName.includes(term);
     });
-  }, [danhSachHienThi, tuKhoa]);
+  }, [rows, keyword]);
 
-  const moModalThem = () => {
-    setDangSua(null);
-    setDuLieuForm({
+  /** =========================
+   *  HISTORY (MATCH equipmentService signature)
+   *  equipmentService.js: getFacilityEquipmentHistory(facilityId, equipmentTypeId?)
+   *  ========================= */
+  const fetchHistory = useCallback(async (item) => {
+  if (!item || item.isType) {
+    setItemHistory([]);
+    return;
+  }
+
+  const facilityId = toNumberOrNull(item.roomId);
+  const equipmentTypeId = toNumberOrNull(item.equipmentTypeId);
+
+  // ✅ bắt buộc đủ cả 2 để lấy đúng lịch sử 1 thiết bị
+  if (!facilityId || !equipmentTypeId) {
+    setItemHistory([]);
+    return;
+  }
+
+  try {
+    const data = await getFacilityEquipmentHistory(facilityId, {
+      equipmentTypeId,
+      limit: 50,
+      offset: 0,
+    });
+    setItemHistory(Array.isArray(data) ? data : []);
+  } catch (e) {
+    setItemHistory([]);
+  }
+}, []);
+
+
+  const openCreateModal = () => {
+    setEditingItem(null);
+    setEditNote("");
+    setFormData({
       name: "",
       equipmentTypeId: "",
-      roomId: phongDangChon || "",
+      roomId: selectedRoomId || "",
       quantity: "",
       condition: "GOOD",
       description: "",
     });
-    setHienModalThem(true);
+    setShowUpsertModal(true);
   };
 
-  const xuLyTaoLoai = async (e) => {
+  const handleCreateType = async (e) => {
     e.preventDefault();
     try {
-      await createEquipmentType(duLieuLoai);
+      await createEquipmentType(typeFormData);
       alert("Tạo loại thiết bị thành công!");
-      setHienModalTaoLoai(false);
-      setDuLieuLoai({ name: "", iconUrl: "", category: "General" });
-
-      // ✅ reload types chuẩn (tránh lệch state)
-      await taiDuLieuNen();
-      await taiDanhSachHienThi();
+      setShowCreateTypeModal(false);
+      setTypeFormData({ name: "", iconUrl: "", category: "General" });
+      await reloadCurrentView();
     } catch {
       alert("Lỗi khi tạo loại thiết bị!");
     }
   };
 
-  const xemChiTiet = (item) => {
-    setThietBiDangChon(item);
-    setTabChiTiet("thong_tin");
-    setHienModalChiTiet(true);
-
-    // backend chưa có API lịch sử
-    setLichSuThietBi([]);
+  const openDetail = async (item) => {
+    setSelectedItem(item);
+    setDetailTab("info");
+    setShowDetailModal(true);
+    // chỉ preload history 1 lần để UI hiển thị số lượng
+    await fetchHistory(item);
   };
 
-  const moSua = (item) => {
-    setDangSua(item);
+  const openEdit = (item) => {
+    setEditingItem(item);
+    setEditNote("");
 
-    setDuLieuForm({
+    setFormData({
       name: item.name || "",
       equipmentTypeId: item.equipmentTypeId?.toString() || "",
-      roomId: item.roomId?.toString() || phongDangChon || "",
+      roomId: item.roomId?.toString() || selectedRoomId || "",
       quantity: String(item.quantity ?? ""),
       condition: item.condition || "GOOD",
       description: item.description || "",
     });
 
-    setHienModalThem(true);
+    setShowUpsertModal(true);
   };
 
-  const xoaThietBi = async (item) => {
+  const handleDelete = async (item) => {
     const ok = window.confirm("Bạn có chắc chắn muốn xóa thiết bị này khỏi phòng?");
     if (!ok) return;
 
     try {
-      await removeFacilityEquipment(
-        item.roomId,
-        item.equipmentTypeId,
-        item._apiCondition || toApiCondition(item.condition)
-      );
+      await removeFacilityEquipment(item.roomId, item.equipmentTypeId, item._apiCondition || toApiCondition(item.condition));
+
       alert("Xóa thiết bị khỏi phòng thành công!");
-      await taiDanhSachHienThi();
+      await reloadCurrentView();
+
+      if (selectedItem && selectedItem.roomId === item.roomId && selectedItem.equipmentTypeId === item.equipmentTypeId) {
+        await fetchHistory(selectedItem);
+      }
     } catch {
       alert("Lỗi khi xóa thiết bị!");
     }
   };
 
-  const guiForm = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     try {
-      const roomId = duLieuForm.roomId ? Number(duLieuForm.roomId) : null;
-      const equipmentTypeId = duLieuForm.equipmentTypeId ? Number(duLieuForm.equipmentTypeId) : null;
-      const quantity = Number(duLieuForm.quantity);
+      const facilityId = formData.roomId ? Number(formData.roomId) : null;
+      const equipmentTypeId = formData.equipmentTypeId ? Number(formData.equipmentTypeId) : null;
+      const quantity = Number(formData.quantity);
 
-      if (!roomId) return alert("Vui lòng chọn phòng!");
-      if (!equipmentTypeId) return alert("Vui lòng chọn loại thiết bị!");
+      if (!facilityId || !Number.isFinite(facilityId)) return alert("Vui lòng chọn phòng!");
+      if (!equipmentTypeId || !Number.isFinite(equipmentTypeId)) return alert("Vui lòng chọn loại thiết bị!");
       if (!quantity || quantity < 1) return alert("Số lượng phải >= 1");
 
-      const conditionApi = toApiCondition(duLieuForm.condition);
+      const newConditionApi = toApiCondition(formData.condition);
 
-      if (dangSua) {
-        await updateFacilityEquipment(
-          roomId,
-          equipmentTypeId,
-          dangSua._apiCondition || conditionApi,
-          {
-            quantity,
-            condition: conditionApi,
-            description: duLieuForm.description || "",
-          }
-        );
+      if (editingItem) {
+        if (!editNote.trim()) return alert("Vui lòng nhập nội dung chỉnh sửa!");
+
+        const oldConditionApi = editingItem._apiCondition || toApiCondition(editingItem.condition);
+
+        // ✅ match Controller BE: Body { quantity, newCondition?, note }
+        const payload = {
+          quantity,
+          note: editNote.trim(),
+        };
+
+        if (newConditionApi !== oldConditionApi) {
+          payload.newCondition = newConditionApi;
+        }
+
+        await updateFacilityEquipment(facilityId, equipmentTypeId, oldConditionApi, payload);
         alert("Cập nhật thiết bị thành công!");
       } else {
-        await addEquipmentToFacility(roomId, {
+        await addEquipmentToFacility(facilityId, {
           equipmentTypeId,
           quantity,
-          condition: conditionApi,
+          condition: newConditionApi,
         });
         alert("Thêm thiết bị vào phòng thành công!");
       }
 
-      setHienModalThem(false);
+      setShowUpsertModal(false);
+      setViewMode("instances");
+      setSelectedRoomId(String(facilityId));
 
-      setCheDoXem("instances");
-      setPhongDangChon(String(roomId));
-      await taiDanhSachHienThi();
+      await loadInstances();
+
+      if (selectedItem && !selectedItem.isType) {
+        await fetchHistory(selectedItem);
+      }
     } catch {
-      alert(dangSua ? "Lỗi khi cập nhật thiết bị!" : "Lỗi khi thêm thiết bị!");
+      alert(editingItem ? "Lỗi khi cập nhật thiết bị!" : "Lỗi khi thêm thiết bị!");
     }
   };
 
@@ -345,23 +423,19 @@ export default function EquipmentManagement() {
               <input
                 type="text"
                 placeholder="Tìm kiếm theo tên / danh mục / phòng..."
-                value={tuKhoa}
-                onChange={(e) => setTuKhoa(e.target.value)}
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500"
               />
             </div>
 
             <div className="flex items-center gap-2">
-              <Button
-                onClick={() => setHienModalTaoLoai(true)}
-                variant="secondary"
-                className="flex items-center gap-2"
-              >
+              <Button onClick={() => setShowCreateTypeModal(true)} variant="secondary" className="flex items-center gap-2">
                 <Plus className="w-5 h-5" />
                 Tạo loại thiết bị
               </Button>
 
-              <Button onClick={moModalThem} className="flex items-center gap-2">
+              <Button onClick={openCreateModal} className="flex items-center gap-2">
                 <Plus className="w-5 h-5" />
                 Thêm thiết bị vào phòng
               </Button>
@@ -371,9 +445,9 @@ export default function EquipmentManagement() {
           <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
             <div className="flex gap-2">
               <button
-                onClick={() => setCheDoXem("types")}
+                onClick={() => setViewMode("types")}
                 className={`px-4 py-2 rounded-xl text-sm font-medium border transition-colors ${
-                  cheDoXem === "types"
+                  viewMode === "types"
                     ? "bg-orange-50 text-orange-700 border-orange-200"
                     : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
                 }`}
@@ -382,9 +456,9 @@ export default function EquipmentManagement() {
               </button>
 
               <button
-                onClick={() => setCheDoXem("instances")}
+                onClick={() => setViewMode("instances")}
                 className={`px-4 py-2 rounded-xl text-sm font-medium border transition-colors ${
-                  cheDoXem === "instances"
+                  viewMode === "instances"
                     ? "bg-orange-50 text-orange-700 border-orange-200"
                     : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
                 }`}
@@ -393,21 +467,29 @@ export default function EquipmentManagement() {
               </button>
             </div>
 
-            {cheDoXem === "instances" && (
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600">Chọn phòng:</span>
-                <select
-                  value={phongDangChon}
-                  onChange={(e) => setPhongDangChon(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                >
-                  <option value="">-- Chọn phòng --</option>
-                  {danhSachPhong.map((room) => (
-                    <option key={room.id} value={String(room.id)}>
-                      {room.name}
-                    </option>
-                  ))}
-                </select>
+            {viewMode === "instances" && (
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-600">Chọn phòng:</span>
+                  <select
+                    value={selectedRoomId}
+                    onChange={(e) => setSelectedRoomId(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                  >
+                    <option value="">-- Chọn phòng --</option>
+                    {rooms.map((room) => (
+                      <option key={room.id} value={String(room.id)}>
+                        {room.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {!!selectedRoomName && (
+                  <div className="text-sm text-gray-700">
+                    Thiết bị của phòng: <span className="font-semibold">{selectedRoomName}</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -415,7 +497,7 @@ export default function EquipmentManagement() {
       </AdminHeader>
 
       <AdminContent>
-        {dangTai ? (
+        {loading ? (
           <div className="text-center py-20">
             <div className="animate-spin w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full mx-auto mb-4"></div>
             <p className="text-gray-400">Đang tải dữ liệu...</p>
@@ -428,16 +510,20 @@ export default function EquipmentManagement() {
                   <tr>
                     <th className="p-4 font-semibold text-gray-700">Tên thiết bị</th>
                     <th className="p-4 font-semibold text-gray-700">Danh mục</th>
-                    <th className="p-4 font-semibold text-gray-700">Phòng</th>
-                    <th className="p-4 font-semibold text-gray-700">Số lượng</th>
-                    <th className="p-4 font-semibold text-gray-700">Trạng thái</th>
-                    <th className="p-4 font-semibold text-gray-700 text-right">Thao tác</th>
+                      {viewMode === "instances" && (
+                        <>
+                          <th className="p-4 font-semibold text-gray-700">Phòng</th>
+                          <th className="p-4 font-semibold text-gray-700">Số lượng</th>
+                        </>
+                      )}
+                      <th className="p-4 font-semibold text-gray-700">Trạng thái</th>
+                      <th className="p-4 font-semibold text-gray-700 text-right">Thao tác</th>
                   </tr>
                 </thead>
 
                 <tbody className="divide-y divide-gray-100">
-                  {danhSachLoc.length > 0 ? (
-                    danhSachLoc.map((item) => (
+                  {filteredRows.length > 0 ? (
+                    filteredRows.map((item) => (
                       <tr key={item.id} className="hover:bg-gray-50 transition-colors">
                         <td className="p-4">
                           <div className="flex items-center gap-2">
@@ -449,50 +535,38 @@ export default function EquipmentManagement() {
                         <td className="p-4">
                           {item.category ? (
                             <Badge type="info" className="text-xs">
-                              {hienThiDanhMuc(item.category)}
+                              {displayCategoryVi(item.category)}
                             </Badge>
                           ) : (
                             <span className="text-gray-400 italic">-</span>
                           )}
                         </td>
 
-                        <td className="p-4">
-                          {item.roomName ? (
-                            <div className="flex items-center gap-1 text-gray-600">
-                              <Building2 className="w-4 h-4" />
-                              {item.roomName}
-                            </div>
-                          ) : (
-                            <span className="text-gray-400 italic">{cheDoXem === "types" ? "-" : "Chưa gán"}</span>
-                          )}
-                        </td>
+                        {viewMode === "instances" && (
+                          <>
+                            <td className="p-4">
+                              {item.roomName ? (
+                                <div className="flex items-center gap-1 text-gray-600">
+                                  <Building2 className="w-4 h-4" />
+                                  {item.roomName}
+                                </div>
+                              ) : (
+                                <span className="text-gray-400 italic">-</span>
+                              )}
+                            </td>
 
-                        <td className="p-4 text-gray-600">
-                          {item.isType ? <span className="text-gray-400 italic">-</span> : `${item.quantity} cái`}
-                        </td>
+                            <td className="p-4 text-gray-600">{`${item.quantity} cái`}</td>
+                          </>
+                        )}
 
                         <td className="p-4">
-                          <Badge
-                            type={
-                              item.status === "available"
-                                ? "success"
-                                : item.status === "maintenance"
-                                ? "warning"
-                                : "danger"
-                            }
-                          >
-                            {item.status === "available"
-                              ? "Sẵn sàng"
-                              : item.status === "maintenance"
-                              ? "Bảo trì"
-                              : "Hỏng"}
-                          </Badge>
+                          <Badge type={badgeTypeFromStatus(item.status)}>{displayStatusVi(item.status)}</Badge>
                         </td>
 
                         <td className="p-4">
                           <div className="flex justify-end gap-2">
                             <button
-                              onClick={() => xemChiTiet(item)}
+                              onClick={() => openDetail(item)}
                               className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
                               title="Xem chi tiết"
                             >
@@ -502,14 +576,14 @@ export default function EquipmentManagement() {
                             {!item.isType && (
                               <>
                                 <button
-                                  onClick={() => moSua(item)}
+                                  onClick={() => openEdit(item)}
                                   className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                                   title="Chỉnh sửa"
                                 >
                                   <Edit2 className="w-4 h-4" />
                                 </button>
                                 <button
-                                  onClick={() => xoaThietBi(item)}
+                                  onClick={() => handleDelete(item)}
                                   className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                   title="Xóa khỏi phòng"
                                 >
@@ -523,8 +597,8 @@ export default function EquipmentManagement() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="6" className="p-8 text-center text-gray-500">
-                        {cheDoXem === "instances" && !phongDangChon
+                      <td colSpan={viewMode === "instances" ? 6 : 4} className="p-8 text-center text-gray-500">
+                        {viewMode === "instances" && !selectedRoomId
                           ? "Hãy chọn phòng để xem danh sách thiết bị."
                           : "Không có dữ liệu phù hợp."}
                       </td>
@@ -537,42 +611,42 @@ export default function EquipmentManagement() {
         )}
       </AdminContent>
 
-      {/* Modal thêm/sửa thiết bị */}
-      {hienModalThem && (
+      {/* Modal add/edit */}
+      {showUpsertModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="fixed inset-0 bg-black/50 transition-opacity" aria-hidden="true" />
           <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
             <Card className="relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-2xl max-h-[90vh] flex flex-col">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-bold text-gray-900">
-                  {dangSua ? "Cập nhật thiết bị trong phòng" : "Thêm thiết bị vào phòng"}
+                  {editingItem ? "Cập nhật thiết bị trong phòng" : "Thêm thiết bị vào phòng"}
                 </h2>
-                <button onClick={() => setHienModalThem(false)} className="text-gray-400 hover:text-gray-600 text-2xl">
+                <button onClick={() => setShowUpsertModal(false)} className="text-gray-400 hover:text-gray-600 text-2xl">
                   ×
                 </button>
               </div>
 
-              <form onSubmit={guiForm} className="flex flex-col flex-1 min-h-0">
+              <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
                 <div className="space-y-4 overflow-y-auto flex-1 pr-2">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Loại thiết bị *</label>
                     <select
                       required
-                      value={duLieuForm.equipmentTypeId}
+                      value={formData.equipmentTypeId}
                       onChange={(e) => {
-                        const selectedType = danhSachLoaiThietBi.find((t) => String(t.id) === e.target.value);
-                        setDuLieuForm({
-                          ...duLieuForm,
+                        const selectedType = equipmentTypes.find((t) => String(t.id) === e.target.value);
+                        setFormData((prev) => ({
+                          ...prev,
                           equipmentTypeId: e.target.value,
-                          name: selectedType ? selectedType.name : duLieuForm.name,
-                        });
+                          name: selectedType ? selectedType.name : prev.name,
+                        }));
                       }}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     >
                       <option value="">-- Chọn loại thiết bị --</option>
-                      {danhSachLoaiThietBi.map((type) => (
+                      {equipmentTypes.map((type) => (
                         <option key={type.id} value={String(type.id)}>
-                          {type.name} {type.category ? `(${hienThiDanhMuc(type.category)})` : ""}
+                          {type.name} {type.category ? `(${displayCategoryVi(type.category)})` : ""}
                         </option>
                       ))}
                     </select>
@@ -583,8 +657,8 @@ export default function EquipmentManagement() {
                     <input
                       type="text"
                       required
-                      value={duLieuForm.name}
-                      onChange={(e) => setDuLieuForm({ ...duLieuForm, name: e.target.value })}
+                      value={formData.name}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                       placeholder="Ví dụ: Máy chiếu, Loa, Bộ phát wifi..."
                     />
@@ -598,12 +672,12 @@ export default function EquipmentManagement() {
                       <label className="block text-sm font-medium text-gray-700 mb-2">Phòng *</label>
                       <select
                         required
-                        value={duLieuForm.roomId}
-                        onChange={(e) => setDuLieuForm({ ...duLieuForm, roomId: e.target.value })}
+                        value={formData.roomId}
+                        onChange={(e) => setFormData((prev) => ({ ...prev, roomId: e.target.value }))}
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                       >
                         <option value="">-- Chọn phòng --</option>
-                        {danhSachPhong.map((room) => (
+                        {rooms.map((room) => (
                           <option key={room.id} value={String(room.id)}>
                             {room.name}
                           </option>
@@ -617,8 +691,8 @@ export default function EquipmentManagement() {
                         type="number"
                         required
                         min="1"
-                        value={duLieuForm.quantity}
-                        onChange={(e) => setDuLieuForm({ ...duLieuForm, quantity: e.target.value })}
+                        value={formData.quantity}
+                        onChange={(e) => setFormData((prev) => ({ ...prev, quantity: e.target.value }))}
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                         placeholder="Ví dụ: 5"
                       />
@@ -629,21 +703,38 @@ export default function EquipmentManagement() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">Tình trạng *</label>
                     <select
                       required
-                      value={duLieuForm.condition}
-                      onChange={(e) => setDuLieuForm({ ...duLieuForm, condition: e.target.value })}
+                      value={formData.condition}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, condition: e.target.value }))}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     >
                       <option value="GOOD">Tốt</option>
-                      <option value="FAIR">Khá</option>
                       <option value="POOR">Kém</option>
                     </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Nếu chọn <b>Kém</b> thì trạng thái thiết bị sẽ hiển thị là <b>Sửa chữa</b>.
+                    </p>
                   </div>
+
+                  {editingItem && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Nội dung chỉnh sửa *</label>
+                      <textarea
+                        required
+                        value={editNote}
+                        onChange={(e) => setEditNote(e.target.value)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                        rows={3}
+                        placeholder="Ví dụ: Điều chỉnh số lượng do kiểm kê, đổi tình trạng do thiết bị hỏng..."
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Nội dung này sẽ được lưu vào lịch sử chỉnh sửa.</p>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Mô tả (tùy chọn)</label>
                     <textarea
-                      value={duLieuForm.description}
-                      onChange={(e) => setDuLieuForm({ ...duLieuForm, description: e.target.value })}
+                      value={formData.description}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, description: e.target.value }))}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                       rows={3}
                       placeholder="Ghi chú thêm về thiết bị..."
@@ -652,11 +743,11 @@ export default function EquipmentManagement() {
                 </div>
 
                 <div className="sticky bottom-0 bg-white border-t pt-4 mt-4 flex justify-end gap-3">
-                  <Button type="button" variant="secondary" onClick={() => setHienModalThem(false)}>
+                  <Button type="button" variant="secondary" onClick={() => setShowUpsertModal(false)}>
                     Hủy
                   </Button>
                   <Button type="submit" variant="primary">
-                    {dangSua ? "Cập nhật" : "Thêm"}
+                    {editingItem ? "Cập nhật" : "Thêm"}
                   </Button>
                 </div>
               </form>
@@ -665,8 +756,8 @@ export default function EquipmentManagement() {
         </div>
       )}
 
-      {/* Modal chi tiết */}
-      {hienModalChiTiet && thietBiDangChon && (
+      {/* Detail modal */}
+      {showDetailModal && selectedItem && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="fixed inset-0 bg-black/50 transition-opacity" aria-hidden="true" />
           <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
@@ -675,15 +766,15 @@ export default function EquipmentManagement() {
                 <div>
                   <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
                     <Package className="w-6 h-6 text-orange-600" />
-                    {thietBiDangChon.name}
+                    {selectedItem.name}
                   </h2>
                   <p className="text-sm text-gray-500 mt-1">Thông tin chi tiết thiết bị</p>
                 </div>
                 <button
                   onClick={() => {
-                    setHienModalChiTiet(false);
-                    setThietBiDangChon(null);
-                    setLichSuThietBi([]);
+                    setShowDetailModal(false);
+                    setSelectedItem(null);
+                    setItemHistory([]);
                   }}
                   className="text-gray-400 hover:text-gray-600 text-2xl"
                 >
@@ -693,9 +784,9 @@ export default function EquipmentManagement() {
 
               <div className="flex gap-2 mb-6 border-b">
                 <button
-                  onClick={() => setTabChiTiet("thong_tin")}
+                  onClick={() => setDetailTab("info")}
                   className={`px-4 py-2 font-medium text-sm transition-colors ${
-                    tabChiTiet === "thong_tin"
+                    detailTab === "info"
                       ? "text-orange-600 border-b-2 border-orange-600"
                       : "text-gray-600 hover:text-gray-900"
                   }`}
@@ -704,67 +795,108 @@ export default function EquipmentManagement() {
                 </button>
 
                 <button
-                  onClick={() => setTabChiTiet("lich_su")}
+                  onClick={async () => {
+                    setDetailTab("history");
+                    await fetchHistory(selectedItem);
+                  }}
                   className={`px-4 py-2 font-medium text-sm transition-colors ${
-                    tabChiTiet === "lich_su"
+                    detailTab === "history"
                       ? "text-orange-600 border-b-2 border-orange-600"
                       : "text-gray-600 hover:text-gray-900"
                   }`}
                 >
                   <div className="flex items-center gap-2">
                     <History className="w-4 h-4" />
-                    Lịch sử ({lichSuThietBi.length})
+                    Lịch sử ({itemHistory.length})
                   </div>
                 </button>
               </div>
 
               <div className="flex-1 overflow-y-auto">
-                {tabChiTiet === "thong_tin" && (
+                {detailTab === "info" && (
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="text-sm font-medium text-gray-500">Phòng</label>
-                        <p className="text-gray-900 font-medium mt-1">
-                          {thietBiDangChon.roomName || <span className="text-gray-400 italic">-</span>}
-                        </p>
+                        <label className="text-sm font-medium text-gray-500">Danh mục</label>
+                        <p className="text-gray-900 font-medium mt-1">{displayCategoryVi(selectedItem.category)}</p>
                       </div>
 
-                      <div>
-                        <label className="text-sm font-medium text-gray-500">Số lượng</label>
-                        <p className="text-gray-900 font-medium mt-1">
-                          {thietBiDangChon.isType ? (
-                            <span className="text-gray-400 italic">-</span>
-                          ) : (
-                            `${thietBiDangChon.quantity} cái`
-                          )}
-                        </p>
-                      </div>
-
-                      {!thietBiDangChon.isType && (
+                      {!selectedItem.isType && (
                         <div>
-                          <label className="text-sm font-medium text-gray-500">Tình trạng</label>
-                          <p className="text-gray-900 font-medium mt-1">
-                            {hienThiTinhTrang(thietBiDangChon.condition)}
-                          </p>
+                          <label className="text-sm font-medium text-gray-500">Phòng</label>
+                          <p className="text-gray-900 font-medium mt-1">{selectedItem.roomName || "-"}</p>
                         </div>
                       )}
+
+                      {!selectedItem.isType && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">Số lượng</label>
+                          <p className="text-gray-900 font-medium mt-1">{`${selectedItem.quantity} cái`}</p>
+                        </div>
+                      )}
+
+                      {!selectedItem.isType && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500">Tình trạng</label>
+                          <p className="text-gray-900 font-medium mt-1">{displayConditionVi(selectedItem.condition)}</p>
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="text-sm font-medium text-gray-500">Trạng thái</label>
+                        <div className="mt-1">
+                          <Badge type={badgeTypeFromStatus(selectedItem.status)}>{displayStatusVi(selectedItem.status)}</Badge>
+                        </div>
+                      </div>
                     </div>
 
-                    {thietBiDangChon.description && (
+                    {selectedItem.description && (
                       <div>
                         <label className="text-sm font-medium text-gray-500">Mô tả</label>
-                        <p className="text-gray-900 mt-1">{thietBiDangChon.description}</p>
+                        <p className="text-gray-900 mt-1">{selectedItem.description}</p>
                       </div>
                     )}
                   </div>
                 )}
 
-                {tabChiTiet === "lich_su" && (
+                {detailTab === "history" && (
                   <div className="space-y-3">
-                    <div className="text-center py-8 text-gray-500">
-                      <History className="w-12 h-12 mx-auto mb-2 opacity-20" />
-                      <p>Hiện chưa có API lịch sử thiết bị.</p>
-                    </div>
+                    {itemHistory.length > 0 ? (
+                      itemHistory.map((log) => (
+                        <div key={log.id} className="border-l-2 border-gray-200 pl-4 pb-4">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex-1">
+                              <p className="text-sm font-semibold text-gray-900">{log.action}</p>
+                              {log.note && <p className="text-xs text-gray-600 mt-1">{log.note}</p>}
+
+                              <div className="text-xs text-gray-600 mt-2 space-y-1">
+                                {log.oldQuantity !== null && log.newQuantity !== null && (
+                                  <div>
+                                    • Số lượng: {String(log.oldQuantity)} → {String(log.newQuantity)}
+                                  </div>
+                                )}
+                                {log.oldCondition && log.newCondition && (
+                                  <div>
+                                    • Tình trạng: {String(log.oldCondition)} → {String(log.newCondition)}
+                                  </div>
+                                )}
+                              </div>
+
+                              <p className="text-xs text-gray-500 mt-2">Người thực hiện: {log.createdById ?? "N/A"}</p>
+                            </div>
+
+                            <span className="text-xs text-gray-400 whitespace-nowrap">
+                              {new Date(log.createdAt).toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-8 text-gray-500">
+                        <History className="w-12 h-12 mx-auto mb-2 opacity-20" />
+                        <p>Chưa có lịch sử chỉnh sửa.</p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -773,20 +905,20 @@ export default function EquipmentManagement() {
                 <Button
                   variant="secondary"
                   onClick={() => {
-                    setHienModalChiTiet(false);
-                    setThietBiDangChon(null);
-                    setLichSuThietBi([]);
+                    setShowDetailModal(false);
+                    setSelectedItem(null);
+                    setItemHistory([]);
                   }}
                 >
                   Đóng
                 </Button>
 
-                {!thietBiDangChon.isType && (
+                {!selectedItem.isType && (
                   <Button
                     variant="primary"
                     onClick={() => {
-                      setHienModalChiTiet(false);
-                      moSua(thietBiDangChon);
+                      setShowDetailModal(false);
+                      openEdit(selectedItem);
                     }}
                   >
                     Chỉnh sửa
@@ -798,8 +930,8 @@ export default function EquipmentManagement() {
         </div>
       )}
 
-      {/* Modal tạo loại thiết bị */}
-      {hienModalTaoLoai && (
+      {/* Create type modal */}
+      {showCreateTypeModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="fixed inset-0 bg-black/50 transition-opacity" aria-hidden="true" />
           <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
@@ -808,8 +940,8 @@ export default function EquipmentManagement() {
                 <h2 className="text-xl font-bold text-gray-900">Tạo loại thiết bị mới</h2>
                 <button
                   onClick={() => {
-                    setHienModalTaoLoai(false);
-                    setDuLieuLoai({ name: "", iconUrl: "", category: "General" });
+                    setShowCreateTypeModal(false);
+                    setTypeFormData({ name: "", iconUrl: "", category: "General" });
                   }}
                   className="text-gray-400 hover:text-gray-600 text-2xl"
                 >
@@ -817,15 +949,15 @@ export default function EquipmentManagement() {
                 </button>
               </div>
 
-              <form onSubmit={xuLyTaoLoai} className="flex flex-col flex-1 min-h-0">
+              <form onSubmit={handleCreateType} className="flex flex-col flex-1 min-h-0">
                 <div className="space-y-4 overflow-y-auto flex-1 pr-2">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Tên loại thiết bị *</label>
                     <input
                       type="text"
                       required
-                      value={duLieuLoai.name}
-                      onChange={(e) => setDuLieuLoai({ ...duLieuLoai, name: e.target.value })}
+                      value={typeFormData.name}
+                      onChange={(e) => setTypeFormData((prev) => ({ ...prev, name: e.target.value }))}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                       placeholder="Ví dụ: Máy chiếu 4K, Loa hội trường..."
                     />
@@ -835,8 +967,8 @@ export default function EquipmentManagement() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">Đường dẫn icon (tùy chọn)</label>
                     <input
                       type="url"
-                      value={duLieuLoai.iconUrl}
-                      onChange={(e) => setDuLieuLoai({ ...duLieuLoai, iconUrl: e.target.value })}
+                      value={typeFormData.iconUrl}
+                      onChange={(e) => setTypeFormData((prev) => ({ ...prev, iconUrl: e.target.value }))}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                       placeholder="https://..."
                     />
@@ -846,8 +978,8 @@ export default function EquipmentManagement() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">Danh mục *</label>
                     <select
                       required
-                      value={duLieuLoai.category}
-                      onChange={(e) => setDuLieuLoai({ ...duLieuLoai, category: e.target.value })}
+                      value={typeFormData.category}
+                      onChange={(e) => setTypeFormData((prev) => ({ ...prev, category: e.target.value }))}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     >
                       <option value="Visual">Hình ảnh</option>
@@ -863,8 +995,8 @@ export default function EquipmentManagement() {
                     type="button"
                     variant="secondary"
                     onClick={() => {
-                      setHienModalTaoLoai(false);
-                      setDuLieuLoai({ name: "", iconUrl: "", category: "General" });
+                      setShowCreateTypeModal(false);
+                      setTypeFormData({ name: "", iconUrl: "", category: "General" });
                     }}
                   >
                     Hủy
