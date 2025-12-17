@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Plus, Edit2, Trash2, Search, Users, Building2, Eye, Calendar, History } from "lucide-react";
 import { api } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
@@ -14,11 +14,14 @@ export default function RoomManagement() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all"); // "all", "active", "inactive", "maintenance"
+  const [typeFilter, setTypeFilter] = useState("all"); // "all" hoặc tên loại phòng
   const [showModal, setShowModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [roomBookings, setRoomBookings] = useState([]);
   const [roomHistory, setRoomHistory] = useState([]);
+  const [roomEquipment, setRoomEquipment] = useState([]);
+  const [loadingEquipment, setLoadingEquipment] = useState(false);
   const [detailTab, setDetailTab] = useState("info");
   const [editingRoom, setEditingRoom] = useState(null);
   const [formData, setFormData] = useState({
@@ -146,16 +149,25 @@ export default function RoomManagement() {
     setSelectedRoom(room);
     setDetailTab("info");
     setShowDetailModal(true);
+    // Reset equipment state
+    setRoomEquipment([]);
+    setLoadingEquipment(true);
+    
     // Load thêm dữ liệu
     try {
-      const [bookings, history] = await Promise.all([
+      const [bookings, history, equipment] = await Promise.all([
         api.getRoomBookings(room.id),
-        api.getRoomHistory(room.id)
+        api.getRoomHistory(room.id),
+        api.getFacilityEquipment(room.id)
       ]);
       setRoomBookings(bookings);
       setRoomHistory(history);
+      setRoomEquipment(equipment || []);
     } catch (error) {
       console.error("Lỗi tải chi tiết phòng:", error);
+      setRoomEquipment([]);
+    } finally {
+      setLoadingEquipment(false);
     }
   };
 
@@ -250,16 +262,32 @@ export default function RoomManagement() {
     }
   };
 
-  const filteredRooms = rooms.filter((room) => {
-    // Filter theo search term
-    const matchesSearch = room.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         room.type.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    // Filter theo status
-    const matchesStatus = statusFilter === "all" || room.status === statusFilter;
-    
-    return matchesSearch && matchesStatus;
-  });
+  // Lấy danh sách các loại phòng duy nhất từ rooms
+  const uniqueTypes = useMemo(() => {
+    const types = new Set();
+    rooms.forEach((room) => {
+      if (room.type) {
+        types.add(room.type);
+      }
+    });
+    return Array.from(types).sort();
+  }, [rooms]);
+
+  const filteredRooms = useMemo(() => {
+    return rooms.filter((room) => {
+      // Filter theo search term
+      const matchesSearch = room.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           room.type.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      // Filter theo status
+      const matchesStatus = statusFilter === "all" || room.status === statusFilter;
+      
+      // Filter theo loại phòng
+      const matchesType = typeFilter === "all" || room.type === typeFilter;
+      
+      return matchesSearch && matchesStatus && matchesType;
+    });
+  }, [rooms, searchTerm, statusFilter, typeFilter]);
 
   const campuses = api.getCampuses();
   
@@ -295,8 +323,8 @@ export default function RoomManagement() {
       {/* Toolbar - Fixed Header */}
       <AdminHeader>
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="flex flex-1 gap-3">
-          <div className="relative flex-1 max-w-md">
+        <div className="flex flex-1 flex-wrap gap-3 items-center">
+          <div className="relative flex-1 min-w-[200px] max-w-md">
             <Search className="absolute left-3 top-3 text-gray-400 w-5 h-5" />
             <input
               type="text"
@@ -311,12 +339,26 @@ export default function RoomManagement() {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-4 py-2 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 text-sm font-medium cursor-pointer"
+            className="px-4 py-2 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 text-sm font-medium cursor-pointer min-w-[160px]"
           >
             <option value="all">Tất cả trạng thái</option>
             <option value="active">Hoạt động</option>
             <option value="maintenance">Bảo trì</option>
             <option value="inactive">Ngừng hoạt động</option>
+          </select>
+
+          {/* Filter theo loại phòng */}
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="px-4 py-2 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500 text-sm font-medium cursor-pointer min-w-[160px]"
+          >
+            <option value="all">Tất cả loại</option>
+            {uniqueTypes.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
           </select>
         </div>
         <Button onClick={handleCreate} className="flex items-center gap-2">
@@ -579,6 +621,7 @@ export default function RoomManagement() {
                   setSelectedRoom(null);
                   setRoomBookings([]);
                   setRoomHistory([]);
+                  setRoomEquipment([]);
                 }}
                 className="text-gray-400 hover:text-gray-600 text-2xl"
               >
@@ -651,6 +694,30 @@ export default function RoomManagement() {
                           {selectedRoom.status === "active" ? "Hoạt động" :
                            selectedRoom.status === "maintenance" ? "Bảo trì" : "Ngừng hoạt động"}
                         </Badge>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-gray-500">Thiết bị</label>
+                      <div className="mt-1">
+                        {loadingEquipment ? (
+                          <div className="flex items-center gap-2 text-gray-500">
+                            <div className="animate-spin w-4 h-4 border-2 border-orange-500 border-t-transparent rounded-full"></div>
+                            <span className="text-sm">Đang tải...</span>
+                          </div>
+                        ) : roomEquipment.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {roomEquipment.map((equipment, index) => (
+                              <span
+                                key={index}
+                                className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800"
+                              >
+                                {equipment}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-gray-500 text-sm">Chưa cập nhật thiết bị</p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -741,6 +808,7 @@ export default function RoomManagement() {
                   setSelectedRoom(null);
                   setRoomBookings([]);
                   setRoomHistory([]);
+                  setRoomEquipment([]);
                 }}
               >
                 Đóng
@@ -749,6 +817,7 @@ export default function RoomManagement() {
                 variant="primary"
                 onClick={() => {
                   setShowDetailModal(false);
+                  setRoomEquipment([]);
                   handleEdit(selectedRoom);
                 }}
               >
