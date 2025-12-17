@@ -1,3 +1,4 @@
+/* eslint-disable no-unsafe-finally */
 /* eslint-disable no-unused-vars */
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
@@ -9,6 +10,7 @@ import { MapPin, Users, Search, CalendarDays, X, Clock, CalendarCheck } from "lu
 import { getFacilities, getFacilityTypes } from "../../services/resourceService";
 import { getRoomTypeColor } from "../../lib/roomTypeColors";
 import BookingForm from "./BookingForm";
+import { searchAvailableRooms } from "../../services/bookingService"; // ✅ NEW
 
 function toLocalYMD(date = new Date()) {
   const yyyy = date.getFullYear();
@@ -28,16 +30,11 @@ function nowMinutes() {
 }
 
 const DEFAULT_SLOTS = [
-  { id: 1, start: "07:00", end: "08:30", label: "Slot 1" },
-  { id: 2, start: "08:30", end: "10:00", label: "Slot 2" },
-  { id: 3, start: "10:00", end: "11:30", label: "Slot 3" },
-  { id: 4, start: "11:30", end: "13:00", label: "Slot 4" },
-  { id: 5, start: "13:00", end: "14:30", label: "Slot 5" },
-  { id: 6, start: "14:30", end: "16:00", label: "Slot 6" },
-  { id: 7, start: "16:00", end: "17:30", label: "Slot 7" },
-  { id: 8, start: "17:30", end: "19:00", label: "Slot 8" },
-  { id: 9, start: "19:00", end: "20:30", label: "Slot 9" },
-  { id: 10, start: "20:30", end: "22:00", label: "Slot 10" },
+  { id: 1, start: "07:00", end: "09:00", label: "Slot 1" },
+  { id: 2, start: "09:00", end: "11:00", label: "Slot 2" },
+  { id: 3, start: "11:00", end: "13:00", label: "Slot 3" },
+  { id: 4, start: "13:00", end: "15:00", label: "Slot 4" },
+  { id: 5, start: "15:00", end: "17:00", label: "Slot 5" },
 ];
 
 export default function FacilitySearchByDate() {
@@ -57,6 +54,10 @@ export default function FacilitySearchByDate() {
 
   const [selectedRoom, setSelectedRoom] = useState(null);
 
+  // ✅ NEW: availability set (phòng còn trống theo date+slot)
+  const [availableRoomIds, setAvailableRoomIds] = useState(new Set());
+  const [checkingAvailability, setCheckingAvailability] = useState(false);
+
   const campusLabel = user?.campusName || `Campus #${user?.campusId ?? ""}`;
   const todayYMD = toLocalYMD(new Date());
   const isToday = selectedDate === todayYMD;
@@ -64,6 +65,13 @@ export default function FacilitySearchByDate() {
   const slotExpired = (slot) => {
     if (!isToday) return false;
     return parseTimeToMinutes(slot.end) <= nowMinutes();
+  };
+
+  // ✅ NEW: slot đang diễn ra (đã bắt đầu nhưng chưa kết thúc)
+  const slotOngoing = (slot) => {
+    if (!isToday) return false;
+    const now = nowMinutes();
+    return parseTimeToMinutes(slot.start) <= now && now < parseTimeToMinutes(slot.end);
   };
 
   const selectedSlotObj = useMemo(() => {
@@ -91,6 +99,14 @@ export default function FacilitySearchByDate() {
       return;
     }
 
+    if (selectedSlotObj && slotOngoing(selectedSlotObj)) {
+      setError(`Slot ${selectedSlotObj.id} đang diễn ra. Vui lòng chọn slot khác.`);
+      setDidSearch(false);
+      setRooms([]);
+      setSelectedRoom(null);
+      return;
+    }
+
     setError("");
   }, [selectedDate, todayYMD, selectedSlotObj]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -106,6 +122,39 @@ export default function FacilitySearchByDate() {
     })();
   }, [user]);
 
+  // ✅ NEW: fetch availability for chosen date+slot
+  const fetchAvailabilityForSlot = async () => {
+    if (!selectedSlotObj) {
+      setAvailableRoomIds(new Set());
+      return;
+    }
+    setCheckingAvailability(true);
+    try {
+      const data = await searchAvailableRooms({
+        date: selectedDate,
+        slot: selectedSlotObj.id,
+        typeId: typeId ? Number(typeId) : undefined,
+        // capacity: undefined, // bạn có thể thêm filter nếu muốn
+      });
+
+      const list = Array.isArray(data) ? data : data?.items ?? data?.data ?? [];
+      const ids = new Set(list.map((r) => r?.id).filter(Boolean));
+      setAvailableRoomIds(ids);
+    } catch (e) {
+      // Nếu searchAvailableRooms lỗi, fallback: không disable theo booking
+      setAvailableRoomIds(new Set());
+    } finally {
+      setCheckingAvailability(false);
+    }
+  };
+
+  // Khi slot/date/type thay đổi và đã search rồi -> refresh availability
+  useEffect(() => {
+    if (!didSearch) return;
+    fetchAvailabilityForSlot();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate, slotId, typeId, didSearch]);
+
   const handleSearch = async () => {
     if (!selectedDate) {
       setError("Vui lòng chọn ngày.");
@@ -119,6 +168,10 @@ export default function FacilitySearchByDate() {
       setError(`Slot ${selectedSlotObj.id} đã qua giờ. Vui lòng chọn slot khác hoặc chọn ngày khác.`);
       return;
     }
+    if (selectedSlotObj && slotOngoing(selectedSlotObj)) {
+      setError(`Slot ${selectedSlotObj.id} đang diễn ra. Vui lòng chọn slot khác.`);
+      return;
+    }
 
     setLoading(true);
     setError("");
@@ -127,10 +180,12 @@ export default function FacilitySearchByDate() {
     try {
       const data = await getFacilities({
         typeId: typeId ? Number(typeId) : undefined,
-        // date: selectedDate, // mở lại nếu backend hỗ trợ lọc theo ngày
       });
       const list = Array.isArray(data) ? data : data?.items ?? [];
       setRooms(list);
+
+      // ✅ NEW: load availability if slot is chosen
+      await fetchAvailabilityForSlot();
     } catch (e) {
       setRooms([]);
       setError(e?.response?.data?.message || "Không thể tải danh sách phòng theo ngày.");
@@ -145,13 +200,33 @@ export default function FacilitySearchByDate() {
 
     if (k) list = list.filter((r) => (r?.name || "").toLowerCase().includes(k));
 
+    // Nếu slot đã chọn nhưng slot invalid -> list rỗng
     if (selectedSlotObj) {
-      if (slotExpired(selectedSlotObj)) return [];
+      if (slotExpired(selectedSlotObj) || slotOngoing(selectedSlotObj)) return [];
       return list;
     }
 
     return list;
   }, [rooms, keyword, selectedSlotObj, selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ✅ NEW: check room disabled
+  const isRoomDisabled = (room) => {
+    // nếu phòng không active (tuỳ BE), bạn có thể check:
+    if (room?.status && String(room.status).toUpperCase() !== "ACTIVE") return true;
+
+    if (!selectedSlotObj) return false; // chưa chọn slot -> không disable theo booking
+
+    // slot đang diễn ra/đã qua giờ -> disable hết
+    if (slotExpired(selectedSlotObj) || slotOngoing(selectedSlotObj)) return true;
+
+    // đã chọn slot -> nếu room không nằm trong list available => đã bị book => disable
+    if (availableRoomIds && availableRoomIds.size > 0) {
+      return !availableRoomIds.has(room.id);
+    }
+
+    // Nếu chưa fetch được availability thì không disable để tránh chặn nhầm
+    return false;
+  };
 
   return (
     <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
@@ -160,7 +235,10 @@ export default function FacilitySearchByDate() {
           <CalendarDays className="w-6 h-6 text-orange-600" />
           <h1 className="text-2xl font-bold text-gray-900">Tìm & đặt phòng theo ngày — {campusLabel}</h1>
         </div>
-        <p className="text-gray-500">Chọn ngày + slot (tuỳ chọn). Ngày quá khứ hoặc slot đã qua giờ sẽ bị chặn.</p>
+        <p className="text-gray-500">
+          Chọn ngày + slot (tuỳ chọn). Ngày quá khứ / slot đã qua giờ / slot đang diễn ra sẽ bị chặn.
+          {selectedSlotObj ? " • Chọn slot sẽ tự disable phòng đã được đặt." : ""}
+        </p>
 
         <div className="mt-5 grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
           <div>
@@ -198,11 +276,16 @@ export default function FacilitySearchByDate() {
               className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-orange-500 outline-none"
             >
               <option value="">Tất cả</option>
-              {DEFAULT_SLOTS.map((s) => (
-                <option key={s.id} value={s.id} disabled={isToday && slotExpired(s)}>
-                  {s.label} ({s.start}-{s.end}) {isToday && slotExpired(s) ? " - đã qua giờ" : ""}
-                </option>
-              ))}
+              {DEFAULT_SLOTS.map((s) => {
+                const expired = isToday && slotExpired(s);
+                const ongoing = isToday && slotOngoing(s);
+                return (
+                  <option key={s.id} value={s.id} disabled={expired || ongoing}>
+                    {s.label} ({s.start}-{s.end}){" "}
+                    {expired ? " - đã qua giờ" : ongoing ? " - đang diễn ra" : ""}
+                  </option>
+                );
+              })}
             </select>
           </div>
 
@@ -228,6 +311,12 @@ export default function FacilitySearchByDate() {
             </Button>
           </div>
         </div>
+
+        {checkingAvailability && selectedSlotObj && (
+          <div className="mt-3 text-sm text-gray-500">
+            Đang kiểm tra phòng trống cho Slot {selectedSlotObj.id}...
+          </div>
+        )}
 
         {error && (
           <div className="mt-4 p-4 rounded-xl bg-red-50 border border-red-100 text-sm text-red-700">
@@ -255,50 +344,78 @@ export default function FacilitySearchByDate() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredRooms.length > 0 ? (
-              filteredRooms.map((room) => (
-                <Card
-                  key={room.id}
-                  className="p-0 overflow-hidden border-gray-200 hover:border-orange-200 hover:shadow-lg transition-all cursor-pointer"
-                  onClick={() => setSelectedRoom(room)}
-                >
-                  <div className="h-44 overflow-hidden relative">
-                    <img
-                      src={room.image || room.thumbnailUrl || room?.imageUrls?.[0] || "https://via.placeholder.com/800x500?text=Facility"}
-                      alt={room.name}
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute top-3 right-3">
-                      {(() => {
-                        const typeName = room.typeName || room.type?.name || room.type || "PHÒNG";
-                        const typeColor = getRoomTypeColor(typeName);
-                        return (
-                          <span className={`px-3 py-1 rounded-full text-xs font-semibold ${typeColor.labelBg} ${typeColor.labelText} shadow-sm backdrop-blur-md`}>
-                            {typeName}
-                          </span>
-                        );
-                      })()}
-                    </div>
-                  </div>
+              filteredRooms.map((room) => {
+                const disabled = isRoomDisabled(room);
 
-                  <div className="p-5">
-                    <h3 className="font-bold text-lg text-gray-900 mb-1">{room.name}</h3>
-                    <div className="flex items-center text-sm text-gray-500 gap-4">
-                      <span className="flex items-center gap-1.5">
-                        <MapPin className="w-4 h-4 text-gray-400" /> {campusLabel}
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <Users className="w-4 h-4 text-gray-400" /> {room.capacity ?? "—"} chỗ
-                      </span>
+                return (
+                  <Card
+                    key={room.id}
+                    className={`
+                      p-0 overflow-hidden border-gray-200 transition-all
+                      ${disabled ? "opacity-60 cursor-not-allowed" : "hover:border-orange-200 hover:shadow-lg cursor-pointer"}
+                    `}
+                    onClick={() => {
+                      if (disabled) return;
+                      setSelectedRoom(room);
+                    }}
+                    title={
+                      disabled && selectedSlotObj
+                        ? "Phòng không khả dụng (đã có người đặt / slot đang diễn ra / phòng không active)"
+                        : ""
+                    }
+                  >
+                    <div className="h-44 overflow-hidden relative">
+                      <img
+                        src={room.image || room.thumbnailUrl || room?.imageUrls?.[0] || "https://via.placeholder.com/800x500?text=Facility"}
+                        alt={room.name}
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute top-3 right-3">
+                        {(() => {
+                          const typeName = room.typeName || room.type?.name || room.type || "PHÒNG";
+                          const typeColor = getRoomTypeColor(typeName);
+                          return (
+                            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${typeColor.labelBg} ${typeColor.labelText} shadow-sm backdrop-blur-md`}>
+                              {typeName}
+                            </span>
+                          );
+                        })()}
+                      </div>
+
+                      {disabled && selectedSlotObj && (
+                        <div className="absolute bottom-3 left-3 bg-black/60 text-white text-xs px-2 py-1 rounded">
+                          Không thể đặt slot này
+                        </div>
+                      )}
                     </div>
 
-                    <div className="mt-4">
-                      <Button className="w-full bg-gray-50 text-gray-700 hover:bg-orange-600 hover:text-white border-none shadow-none">
-                        Xem chi tiết & đặt
-                      </Button>
+                    <div className="p-5">
+                      <h3 className="font-bold text-lg text-gray-900 mb-1">{room.name}</h3>
+                      <div className="flex items-center text-sm text-gray-500 gap-4">
+                        <span className="flex items-center gap-1.5">
+                          <MapPin className="w-4 h-4 text-gray-400" /> {campusLabel}
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <Users className="w-4 h-4 text-gray-400" /> {room.capacity ?? "—"} chỗ
+                        </span>
+                      </div>
+
+                      <div className="mt-4">
+                        <Button
+                          className={`w-full border-none shadow-none ${
+                            disabled
+                              ? "bg-gray-200 text-gray-500 cursor-not-allowed"
+                              : "bg-gray-50 text-gray-700 hover:bg-orange-600 hover:text-white"
+                          }`}
+                          disabled={disabled}
+                        >
+                          {disabled ? "Không khả dụng" : "Xem chi tiết & đặt"}
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                </Card>
-              ))
+                  </Card>
+                );
+              })
             ) : (
               <div className="col-span-3 text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-300">
                 <p className="text-gray-500">Không có phòng phù hợp.</p>
@@ -331,12 +448,76 @@ function RoomBookingModal({ room, campusLabel, selectedDate, preselectedSlotId, 
   // ✅ NEW: success dialog state
   const [successDialog, setSuccessDialog] = useState(null);
 
+  // ✅ NEW: unavailable slots (đã có người book) cho phòng này
+  const [unavailableSlotIds, setUnavailableSlotIds] = useState(new Set());
+  const [checkingSlots, setCheckingSlots] = useState(false);
+
   const slotExpired = (slot) => {
     if (!isToday) return false;
     return parseTimeToMinutes(slot.end) <= nowMinutes();
   };
 
+  const slotOngoing = (slot) => {
+    if (!isToday) return false;
+    const now = nowMinutes();
+    return parseTimeToMinutes(slot.start) <= now && now < parseTimeToMinutes(slot.end);
+  };
+
+  // ✅ NEW: check từng slot xem phòng này còn trống không
+  useEffect(() => {
+    let mounted = true;
+
+    const run = async () => {
+      setCheckingSlots(true);
+      try {
+        const results = await Promise.all(
+          DEFAULT_SLOTS.map(async (slot) => {
+            // Nếu slot đã qua/đang diễn ra thì coi như unavailable luôn (với hôm nay)
+            if (slotExpired(slot) || slotOngoing(slot)) return { slotId: slot.id, available: false };
+
+            const data = await searchAvailableRooms({
+              date: selectedDate,
+              slot: slot.id,
+              // typeId/capacity không bắt buộc, vì ta chỉ cần biết room.id có nằm trong list available hay không
+            });
+
+            const list = Array.isArray(data) ? data : data?.items ?? data?.data ?? [];
+            const ok = list.some((r) => r?.id === room?.id);
+            return { slotId: slot.id, available: ok };
+          })
+        );
+
+        if (!mounted) return;
+
+        const unavailable = new Set(results.filter((x) => !x.available).map((x) => x.slotId));
+        setUnavailableSlotIds(unavailable);
+      } catch (_) {
+        if (!mounted) return;
+        setUnavailableSlotIds(new Set());
+      } finally {
+        if (!mounted) return;
+        setCheckingSlots(false);
+      }
+    };
+
+    run();
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.id, selectedDate]);
+
+  const isSlotDisabled = (slot) => {
+    if (slotExpired(slot) || slotOngoing(slot)) return true;
+    if (unavailableSlotIds.has(slot.id)) return true; // đã có người book slot này cho phòng này
+    return false;
+  };
+
   const handleSlotClick = (slotId) => {
+    const slotObj = DEFAULT_SLOTS.find((s) => s.id === slotId);
+    if (!slotObj) return;
+    if (isSlotDisabled(slotObj)) return;
+
     if (selectedSlots.includes(slotId)) {
       setSelectedSlots(selectedSlots.filter((id) => id !== slotId));
       return;
@@ -371,6 +552,9 @@ function RoomBookingModal({ room, campusLabel, selectedDate, preselectedSlotId, 
             <div className="text-sm text-gray-500">
               {campusLabel} • Ngày: <span className="font-semibold text-gray-900">{selectedDate}</span>
             </div>
+            {checkingSlots && (
+              <div className="text-xs text-gray-500 mt-1">Đang kiểm tra slot còn trống...</div>
+            )}
           </div>
 
           <button onClick={onClose} className="bg-gray-100 hover:bg-gray-200 text-gray-700 p-2 rounded-full transition-all">
@@ -382,33 +566,43 @@ function RoomBookingModal({ room, campusLabel, selectedDate, preselectedSlotId, 
           <div className="mb-6">
             <h3 className="font-bold text-gray-900 mb-3 flex items-center gap-2">
               <Clock className="w-5 h-5 text-orange-600" />
-              Chọn slot (slot đã qua giờ sẽ bị khóa)
+              Chọn slot (slot đã qua / đang diễn ra / đã có người đặt sẽ bị khóa)
             </h3>
 
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               {DEFAULT_SLOTS.map((slot) => {
                 const expired = slotExpired(slot);
+                const ongoing = slotOngoing(slot);
+                const booked = unavailableSlotIds.has(slot.id);
+                const disabled = expired || ongoing || booked;
                 const isSelected = selectedSlots.includes(slot.id);
+
+                let title = "";
+                if (expired) title = "Slot đã qua giờ";
+                else if (ongoing) title = "Slot đang diễn ra";
+                else if (booked) title = "Slot đã có người đặt";
 
                 return (
                   <button
                     key={slot.id}
-                    onClick={() => !expired && handleSlotClick(slot.id)}
-                    disabled={expired}
+                    onClick={() => !disabled && handleSlotClick(slot.id)}
+                    disabled={disabled}
                     className={`
                       p-4 rounded-lg border-2 text-center transition-all
-                      ${expired
+                      ${disabled
                         ? "bg-gray-100 border-gray-200 cursor-not-allowed opacity-60"
                         : isSelected
                         ? "bg-orange-500 border-orange-600 text-white"
                         : "bg-gray-50 border-gray-200 hover:border-orange-300 hover:bg-orange-50"
                       }
                     `}
-                    title={expired ? "Slot đã qua giờ" : ""}
+                    title={title}
                   >
                     <div className="text-xs font-semibold mb-1">{slot.label}</div>
                     <div className="text-xs">{slot.start} - {slot.end}</div>
                     {expired && <div className="text-[11px] mt-1 text-gray-600">Đã qua giờ</div>}
+                    {!expired && ongoing && <div className="text-[11px] mt-1 text-gray-600">Đang diễn ra</div>}
+                    {!expired && !ongoing && booked && <div className="text-[11px] mt-1 text-gray-600">Đã đặt</div>}
                   </button>
                 );
               })}
@@ -440,7 +634,6 @@ function RoomBookingModal({ room, campusLabel, selectedDate, preselectedSlotId, 
                     bookingCode: result?.bookingCode,
                   });
 
-                  // reset UI, nhưng KHÔNG đóng modal ngay để user thấy dialog
                   setShowBookingForm(false);
                   setSelectedSlots([]);
                 }}
@@ -459,7 +652,6 @@ function RoomBookingModal({ room, campusLabel, selectedDate, preselectedSlotId, 
         )}
       </div>
 
-      {/* ✅ Success Dialog */}
       {successDialog && (
         <SuccessDialog
           title={successDialog.title}
@@ -467,7 +659,7 @@ function RoomBookingModal({ room, campusLabel, selectedDate, preselectedSlotId, 
           bookingCode={successDialog.bookingCode}
           onClose={() => {
             setSuccessDialog(null);
-            onClose(); // đóng modal sau khi user đóng dialog
+            onClose();
           }}
         />
       )}

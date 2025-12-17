@@ -1,5 +1,5 @@
 // src/features/auth/Login.jsx
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Mail,
@@ -10,9 +10,12 @@ import {
   EyeOff,
   Info,
   ChevronDown,
+  Chrome,
+  ArrowRight,
 } from "lucide-react";
 
 import { useAuth } from "../../context/AuthContext";
+import { API_BASE_URL } from "../../config/api";
 import Button from "../../components/ui/Button";
 
 const BACKGROUND_IMAGE =
@@ -27,22 +30,8 @@ const CAMPUSES = [
 
 export default function Login() {
   const navigate = useNavigate();
-  const auth = useAuth();
-  const login = auth?.login;
-  
-  // Nếu useAuth trả về undefined, hiển thị lỗi
-  if (!auth || !login) {
-    console.error('[Login] useAuth() returned undefined or missing login function');
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-red-600">Lỗi: AuthContext chưa được khởi tạo đúng</p>
-          <p className="text-gray-500 text-sm mt-2">Vui lòng refresh trang</p>
-        </div>
-      </div>
-    );
-  }
 
+  // ✅ Hooks luôn phải được gọi trước mọi return
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -54,12 +43,20 @@ export default function Login() {
   const [error, setError] = useState("");
   const [showTestAccounts, setShowTestAccounts] = useState(false);
 
+  const auth = useAuth();
+  const login = auth?.login;
+
+  const authReady = useMemo(() => Boolean(auth && login), [auth, login]);
+
   const extractErrorMessage = (err) => {
-    console.log('[Login.extractErrorMessage] Error object:', err);
-    
+    console.log("[Login.extractErrorMessage] Error object:", err);
+
     // Network error (không kết nối được backend)
     if (err?.isNetworkError || (!err?.response && err?.message)) {
-      return err.message || "Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.";
+      return (
+        err.message ||
+        "Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng."
+      );
     }
 
     // Nếu AuthContext / axios đã throw new Error("...") thì dùng luôn
@@ -80,6 +77,12 @@ export default function Login() {
     setLoading(true);
     setError("");
 
+    if (!authReady) {
+      setError("AuthContext chưa được khởi tạo đúng. Vui lòng refresh trang.");
+      setLoading(false);
+      return;
+    }
+
     // Validate campusId trước
     if (!campusId || Number.isNaN(Number(campusId))) {
       setError("Vui lòng chọn cơ sở.");
@@ -88,20 +91,18 @@ export default function Login() {
     }
 
     try {
-      // AuthContext.login(email, password, campusId)
-      // nên return { message, token, user } từ backend
       const data = await login(email, password, campusId);
 
       const role = String(data?.user?.role || "").toUpperCase();
-      console.log('[Login] User role after login:', role);
-      console.log('[Login] User data:', data?.user);
+      console.log("[Login] User role after login:", role);
+      console.log("[Login] User data:", data?.user);
 
       if (role === "FACILITY_ADMIN") {
         navigate("/admin-facility");
       } else if (role === "CAMPUS_ADMIN") {
         navigate("/admin-campus");
       } else if (role === "SECURITY" || role === "SECURITY_GUARD") {
-        console.log('[Login] Redirecting Security to /security/checkin');
+        console.log("[Login] Redirecting Security to /security/checkin");
         navigate("/security/checkin", { replace: true });
       } else {
         navigate("/dashboard");
@@ -113,6 +114,28 @@ export default function Login() {
     }
   };
 
+  const handleGoogleLogin = () => {
+    setError("");
+
+    if (!campusId || Number.isNaN(Number(campusId))) {
+      setError("Vui lòng chọn cơ sở.");
+      return;
+    }
+
+    const url = `${API_BASE_URL}/auth/google/login?campusId=${campusId}`;
+    console.log("[GoogleLogin] redirect:", url);
+
+    // Redirect to backend which will 302 -> Google
+    window.location.assign(url);
+  };
+
+  // ✅ Không return trước hooks nữa — return ở đây thì OK
+  if (!authReady) {
+    console.error(
+      "[Login] useAuth() returned undefined or missing login function"
+    );
+  }
+
   return (
     <div className="min-h-screen flex w-full bg-white font-sans">
       <div className="flex-1 flex flex-col justify-center px-6 sm:px-12 lg:flex-none lg:w-[500px] z-10 bg-white">
@@ -123,6 +146,18 @@ export default function Login() {
             </h2>
             <p className="text-gray-500">Đăng nhập để tiếp tục.</p>
           </div>
+
+          {!authReady && (
+            <div className="mb-5 p-3 bg-red-50 text-red-700 text-sm rounded-lg flex gap-2">
+              <AlertCircle className="w-4 h-4 mt-0.5" />
+              <div>
+                <p className="font-semibold">AuthContext chưa sẵn sàng</p>
+                <p className="text-red-600/80">
+                  Vui lòng refresh trang hoặc kiểm tra Provider bọc App.
+                </p>
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handleLogin} className="space-y-5">
             {/* 1) Chọn Campus */}
@@ -192,8 +227,9 @@ export default function Login() {
                 />
                 <button
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 pr-3 text-gray-400"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute inset-y-0 right-0 pr-3 text-gray-400 hover:text-gray-600"
+                  aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
                 >
                   {showPassword ? (
                     <EyeOff className="h-5 w-5" />
@@ -206,25 +242,62 @@ export default function Login() {
 
             {error && (
               <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg flex gap-2">
-                <AlertCircle className="w-4 h-4" />
-                {error}
+                <AlertCircle className="w-4 h-4 mt-0.5" />
+                <span>{error}</span>
               </div>
             )}
 
             <Button
               type="submit"
               className="w-full py-3 shadow-lg shadow-orange-200"
-              disabled={loading}
+              disabled={loading || !authReady}
             >
               {loading ? "Đang xử lý..." : "Đăng nhập ngay"}
             </Button>
           </form>
 
+          {/* Google Login (GIỮ NGUYÊN LAYOUT - chỉ sửa nút) */}
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={handleGoogleLogin}
+              // ✅ bỏ disabled={loading} để tránh trường hợp loading kẹt
+              className={[
+                "relative z-10 w-full py-3 mt-3 rounded-xl",
+                "border border-gray-200 bg-gradient-to-b from-white to-gray-50",
+                "text-gray-900 shadow-sm",
+                "hover:shadow-md hover:-translate-y-[1px] hover:bg-gray-50 transition-all",
+                "focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2",
+                "flex items-center justify-center gap-3",
+              ].join(" ")}
+            >
+              <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-gray-200">
+                <Chrome className="w-5 h-5 text-gray-700" />
+              </span>
+
+              {/* ✅ sửa src đúng (KHÔNG có / ở đầu) */}
+              <img
+                src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSJBW9gugHuiK0748qr9vZHrlIqdiDdfuEYVw&s"
+                alt="Google"
+                className="w-5 h-5"
+                onError={(e) => (e.currentTarget.style.display = "none")}
+              />
+
+              <span className="font-semibold">Đăng nhập bằng Google</span>
+
+              <ArrowRight className="w-4 h-4 text-gray-500" />
+            </button>
+
+            <p className="text-xs text-gray-400 mt-2 text-center">
+              *Bạn sẽ được chuyển sang Google để xác thực.
+            </p>
+          </div>
+
           {/* Test Accounts */}
           <div className="mt-6 border-t border-gray-200 pt-6">
             <button
               type="button"
-              onClick={() => setShowTestAccounts(!showTestAccounts)}
+              onClick={() => setShowTestAccounts((v) => !v)}
               className="w-full flex items-center justify-between text-sm text-gray-600 hover:text-gray-900 transition-colors"
             >
               <div className="flex items-center gap-2">

@@ -15,16 +15,26 @@ console.log(`[API Config] Using REAL API`);
 
 // Tạo axios instance để các service khác dùng (api.get, api.post, etc.)
 const axiosClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "http://localhost:6969/api",
+  baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:6969/api",
   headers: { "Content-Type": "application/json" },
+  withCredentials: true,
 });
 
-// Bearer token interceptor
+// Bearer token interceptor (localStorage OR cookie)
 axiosClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem("access_token");
+  const lsToken = localStorage.getItem("access_token");
+
+  const cookieToken = document.cookie
+    .split("; ")
+    .find((row) => row.startsWith("access_token="))
+    ?.split("=")[1];
+
+  const token = lsToken || cookieToken;
+
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
+
 
 // Response interceptor
 axiosClient.interceptors.response.use(

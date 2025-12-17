@@ -13,9 +13,10 @@ import ProtectedRoute from "./features/auth/ProtectedRoute";
 import Login from "./features/auth/Login";
 import ProfilePage from "./pages/ProfilePage";
 import DashboardPage from "./pages/DashboardPage";
+import OAuthCallBack from "./features/auth/OAuthCallback";
 
 // Booking
-import RoomSearch from "./features/booking/RoomSearch"; // ✅ đây là trang Đặt phòng
+import RoomSearch from "./features/booking/RoomSearch";
 import BookingForm from "./features/booking/BookingForm";
 import MyBookings from "./features/booking/MyBookings";
 import FacilityCatalog from "./features/booking/FacilityCatalog";
@@ -53,8 +54,6 @@ const MainLayout = () => {
   const isStudentLike = ["student", "lecturer", "club_leader"].includes(role);
   const isSecurity = role === "security" || role === "security_guard";
 
-  // ✅ Redirect nếu đang ở sai khu vực theo role
-  // Facility Admin không được vào khu student
   if (
     isFacilityAdmin &&
     (location.pathname === "/dashboard" ||
@@ -65,17 +64,14 @@ const MainLayout = () => {
     return <Navigate to="/admin-facility" replace />;
   }
 
-  // Student không được vào khu facility admin
   if (isStudentLike && location.pathname.startsWith("/admin-facility")) {
     return <Navigate to="/dashboard" replace />;
   }
 
-  // (tuỳ bạn) Student cũng không vào campus admin
   if (isStudentLike && location.pathname.startsWith("/admin-campus")) {
     return <Navigate to="/dashboard" replace />;
   }
 
-  // Nếu Security đang ở route khác -> redirect về checkin
   if (isSecurity && !location.pathname.startsWith("/security")) {
     return <Navigate to="/security/checkin" replace />;
   }
@@ -111,24 +107,18 @@ const MainLayout = () => {
   );
 };
 
-// Pages đơn giản
 const ForbiddenPage = () => <div className="text-center pt-20">403 - Forbidden</div>;
 const NotFoundPage = () => <div className="text-center pt-20">404 - Not Found</div>;
 
-// Component để redirect dựa trên role
 const RoleBasedRedirect = () => {
   const { user } = useAuth();
   const role = String(user?.role || "").toUpperCase();
-  
-  console.log('[RoleBasedRedirect] User role:', role);
-  console.log('[RoleBasedRedirect] User:', user);
-  
+
   if (role === "FACILITY_ADMIN") {
     return <Navigate to="/admin-facility" replace />;
   } else if (role === "CAMPUS_ADMIN") {
     return <Navigate to="/admin-campus" replace />;
   } else if (role === "SECURITY" || role === "SECURITY_GUARD") {
-    console.log('[RoleBasedRedirect] Redirecting Security to /security/checkin');
     return <Navigate to="/security/checkin" replace />;
   } else {
     return <Navigate to="/dashboard" replace />;
@@ -142,52 +132,51 @@ function App() {
         <Routes>
           {/* Public */}
           <Route path="/login" element={<Login />} />
+
+          {/* ✅ FIX: backend đang redirect về /auth/callback?token=... */}
+          <Route path="/auth/callback" element={<OAuthCallBack />} />
+
           <Route path="/403" element={<ForbiddenPage />} />
 
           {/* Private Layout */}
           <Route element={<ProtectedRoute />}>
             <Route path="/" element={<MainLayout />}>
-              {/* Common */}
               <Route index element={<RoleBasedRedirect />} />
               <Route path="profile" element={<ProfilePage />} />
 
-              {/* ===== SECURITY ===== */}
+              {/* SECURITY */}
               <Route element={<ProtectedRoute roles={["SECURITY", "SECURITY_GUARD"]} />}>
                 <Route path="security/checkin" element={<CheckInScanner />} />
               </Route>
 
-              {/* ===== STUDENT / LECTURER / CLUB_LEADER ===== */}
+              {/* STUDENT / LECTURER / CLUB_LEADER */}
               <Route element={<ProtectedRoute roles={["STUDENT", "LECTURER", "CLUB_LEADER"]} />}>
                 <Route path="dashboard" element={<DashboardPage />} />
 
-                {/* ✅ ĐÚNG theo Sidebar mới */}
                 <Route path="booking" element={<RoomSearch />} />
                 <Route path="facilities" element={<FacilityCatalog />} />
                 <Route path="history" element={<MyBookings />} />
 
-                {/* giữ các route cũ nếu bạn còn dùng */}
                 <Route path="booking/create" element={<BookingForm />} />
                 <Route path="booking/my" element={<MyBookings />} />
                 <Route path="booking/search" element={<RoomSearch />} />
 
-                {/* CLUB_LEADER only */}
                 <Route element={<ProtectedRoute roles={["CLUB_LEADER"]} />}>
                   <Route path="booking/club-suggestions" element={<ClubSuggestions />} />
                 </Route>
 
-                {/* LECTURER only */}
                 <Route element={<ProtectedRoute roles={["LECTURER"]} />}>
                   <Route path="booking/recurring" element={<RecurringBooking />} />
                 </Route>
               </Route>
 
-              {/* ===== CAMPUS ADMIN ===== */}
+              {/* CAMPUS ADMIN */}
               <Route element={<ProtectedRoute roles={["CAMPUS_ADMIN"]} />}>
                 <Route path="admin-campus" element={<DashboardPage />} />
                 <Route path="admin-campus/approvals" element={<ApprovalList />} />
               </Route>
 
-              {/* ===== FACILITY ADMIN ===== */}
+              {/* FACILITY ADMIN */}
               <Route element={<ProtectedRoute roles={["FACILITY_ADMIN"]} />}>
                 <Route path="admin-facility" element={<Navigate to="/admin-facility/approvals" replace />} />
                 <Route path="admin-facility/approvals" element={<ApprovalList />} />

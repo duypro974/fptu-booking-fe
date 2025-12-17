@@ -1,5 +1,8 @@
+// api.js (updated)
+
 // API Configuration
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:6969/api';
+export const API_BASE_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:6969/api";
 
 // Import để dùng trong api.js
 export { API_BASE_URL as API_BASE_URL_EXPORT };
@@ -7,86 +10,108 @@ export { API_BASE_URL as API_BASE_URL_EXPORT };
 // Helper function để lấy token từ localStorage
 export const getAuthToken = () => {
   // Token được lưu riêng trong 'access_token' (theo authService.js)
-  return localStorage.getItem('access_token');
+  return localStorage.getItem("access_token");
 };
 
 // Helper function để gọi API với authentication
 export const apiRequest = async (endpoint, options = {}) => {
   const token = getAuthToken();
-  
+
+  // Merge headers: default + options.headers
   const headers = {
-    'Content-Type': 'application/json',
-    ...options.headers,
+    "Content-Type": "application/json",
+    ...(options.headers || {}),
   };
 
   if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+    headers["Authorization"] = `Bearer ${token}`;
   }
 
-  // Thêm timeout 30 giây
+  // Timeout 30 giây
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 30000);
-  
+
   try {
-    // Sử dụng cache: 'no-cache' và headers để tránh 304 Not Modified
-    // Không thêm _t vào query string vì backend sẽ parse vào Prisma where clause
-    console.log('[apiRequest] Calling:', `${API_BASE_URL}${endpoint}`, 'with token:', token ? 'Yes' : 'No');
-    
-    // Thêm headers để tránh cache
-    const cacheHeaders = {
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Pragma': 'no-cache',
-      'Expires': '0',
-    };
-    
+    console.log(
+      "[apiRequest] Calling:",
+      `${API_BASE_URL}${endpoint}`,
+      "with token:",
+      token ? "Yes" : "No"
+    );
+
+    /**
+     * IMPORTANT:
+     * - Không tự set 'Cache-Control/Pragma/Expires' ở request headers trong browser
+     *   vì dễ gây CORS preflight fail nếu backend không allow các header này.
+     * - Dùng fetch option `cache: 'no-cache'` là đủ để hạn chế cache ở phía browser.
+     */
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
       signal: controller.signal,
-      headers: {
-        ...headers,
-        ...cacheHeaders,
-      },
-      // Thêm cache control để tránh cache (chuẩn HTTP, không cần query param)
-      cache: 'no-cache',
+      headers,
+      cache: "no-cache",
     });
-    
-    clearTimeout(timeoutId);
-    console.log('[apiRequest] Response status:', response.status, response.statusText);
 
-    // Xử lý lỗi
+    clearTimeout(timeoutId);
+    console.log("[apiRequest] Response status:", response.status, response.statusText);
+
+    // Xử lý lỗi HTTP
     if (!response.ok) {
+      // 401: token hết hạn/không hợp lệ -> clear localStorage
       if (response.status === 401) {
-        // Token hết hạn hoặc không hợp lệ - clear localStorage
-        localStorage.removeItem('fptu_user');
-        localStorage.removeItem('access_token');
-        // Không cần reload, AuthContext sẽ tự detect và redirect
-        throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
+        localStorage.removeItem("fptu_user");
+        localStorage.removeItem("access_token");
+        throw new Error("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
       }
-      
+
+      // 403: không có quyền / token không hợp lệ
       if (response.status === 403) {
-        // Token không hợp lệ hoặc không có quyền
-        const errorData = await response.json().catch(() => ({ message: 'Token không hợp lệ hoặc đã hết hạn.' }));
-        throw new Error(errorData.message || 'Bạn không có quyền thực hiện thao tác này. Vui lòng đăng nhập lại.');
+        const errorData = await response
+          .json()
+          .catch(() => ({ message: "Token không hợp lệ hoặc đã hết hạn." }));
+        throw new Error(
+          errorData.message ||
+            "Bạn không có quyền thực hiện thao tác này. Vui lòng đăng nhập lại."
+        );
       }
-      
-      const errorData = await response.json().catch(() => ({ message: 'Có lỗi xảy ra' }));
-      throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+
+      // Các lỗi khác
+      const errorData = await response
+        .json()
+        .catch(() => ({ message: "Có lỗi xảy ra" }));
+
+      throw new Error(
+        errorData.message || `HTTP ${response.status}: ${response.statusText}`
+      );
+    }
+
+    // Nếu response không phải JSON (hiếm), tránh crash
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      // Bạn có thể đổi sang return response.text() nếu backend trả text
+      return null;
     }
 
     return response.json();
   } catch (error) {
     clearTimeout(timeoutId);
-    
-    // Nếu bị abort do timeout
-    if (error.name === 'AbortError') {
-      throw new Error('TIMEOUT_ERROR: Request timeout sau 30 giây. Vui lòng thử lại.');
+
+    // Timeout
+    if (error?.name === "AbortError") {
+      throw new Error("TIMEOUT_ERROR: Request timeout sau 30 giây. Vui lòng thử lại.");
     }
-    
-    // Nếu lỗi kết nối (ERR_CONNECTION_REFUSED, network error), throw error đặc biệt
-    if (error.name === 'TypeError' && error.message.includes('fetch')) {
-      throw new Error('CONNECTION_ERROR: Backend không khả dụng. Vui lòng kiểm tra backend có đang chạy không.');
+
+    // Lỗi network (fetch failed)
+    // Trên Chrome/Edge thường message là "Failed to fetch"
+    if (error?.name === "TypeError") {
+      const msg = String(error.message || "");
+      if (msg.toLowerCase().includes("fetch")) {
+        throw new Error(
+          "CONNECTION_ERROR: Backend không khả dụng. Vui lòng kiểm tra backend có đang chạy không."
+        );
+      }
     }
+
     throw error;
   }
 };
-
