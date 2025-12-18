@@ -7,6 +7,7 @@ import Card from "../../components/ui/Card";
 import Badge from "../../components/ui/Badge";
 import AdminLayout, { AdminHeader, AdminContent } from "../../components/layout/AdminLayout";
 import BookingActionModal from "./BookingActionModal";
+import { toDateISO_Local } from "../../lib/utils";
 
 export default function ApprovalList() {
   const { user } = useAuth();
@@ -138,11 +139,11 @@ export default function ApprovalList() {
         let date = item.date || item.bookingDate || item.startDate;
         if (!date && item.startTime) {
           const startDate = new Date(item.startTime);
-          date = startDate.toISOString().split('T')[0]; // Format: YYYY-MM-DD
+          date = toDateISO_Local(startDate); // Format: YYYY-MM-DD
         } else if (!date && item.bookings?.[0]?.startTime) {
           // Trường hợp BookingGroup: lấy date từ booking đầu tiên
           const startDate = new Date(item.bookings[0].startTime);
-          date = startDate.toISOString().split('T')[0];
+          date = toDateISO_Local(startDate);
         }
         
         // Map startTime và endTime - xử lý cả BookingGroup và Booking đơn lẻ
@@ -357,7 +358,7 @@ export default function ApprovalList() {
       // Convert startTime/endTime sang date
       const startDate = new Date(startTime);
       const endDate = new Date(endTime);
-      const date = startDate.toISOString().split('T')[0]; // YYYY-MM-DD
+      const date = toDateISO_Local(startDate); // YYYY-MM-DD
       
       // Tính TẤT CẢ các slot mà booking trải qua
       const slots = getSlotsFromTimeRange(startTime, endTime);

@@ -1,10 +1,27 @@
 // src/features/security/CheckInScanner.jsx
 import { useState } from "react";
-import { Search, CheckCircle, XCircle, Clock, User, Calendar, Building2, AlertTriangle, X, Plus } from "lucide-react";
+import {
+  Search,
+  CheckCircle,
+  XCircle,
+  Clock,
+  User,
+  Calendar,
+  Building2,
+  AlertTriangle,
+  X,
+  Plus,
+} from "lucide-react";
 import Card from "../../components/ui/Card";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
-import { searchGuardBookings, checkInBooking, checkOutBooking, reportFacilityIssue } from "../../services/bookingService";
+
+import {
+  searchCheckinBookings,
+  checkInBooking,
+  checkOutBooking,
+  reportFacilityIssue,
+} from "../../services/securityService";
 
 export default function CheckInScanner() {
   const [keyword, setKeyword] = useState("");
@@ -26,21 +43,39 @@ export default function CheckInScanner() {
   const [reportError, setReportError] = useState("");
   const [reportSuccess, setReportSuccess] = useState(false);
 
+  const normalizeBookings = (data) => {
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.items)) return data.items;
+    if (Array.isArray(data?.data)) return data.data;
+    return [];
+  };
+
   const handleSearch = async () => {
-    if (!keyword.trim()) {
+    const kw = keyword.trim();
+    if (!kw) {
       setError("Vui lòng nhập từ khóa tìm kiếm");
+      setBookings([]);
       return;
     }
 
     setLoading(true);
     setError("");
     try {
-      const data = await searchGuardBookings(keyword.trim());
-      const list = Array.isArray(data) ? data : (data?.items ?? data?.data ?? []);
-      setBookings(Array.isArray(list) ? list : []);
+      const data = await searchCheckinBookings(kw);
+
+      console.log("[Guard Search] keyword =", kw);
+      console.log("[Guard Search] raw response =", data);
+
+      const list = normalizeBookings(data);
+      setBookings(list);
     } catch (err) {
+      console.error("[Guard Search] error =", err);
       setBookings([]);
-      setError(err?.response?.data?.message || err?.message || "Không thể tìm kiếm đơn đặt phòng.");
+      setError(
+        err?.response?.data?.message ||
+          err?.message ||
+          "Không thể tìm kiếm đơn đặt phòng."
+      );
     } finally {
       setLoading(false);
     }
@@ -50,12 +85,13 @@ export default function CheckInScanner() {
     setProcessingId(bookingId);
     try {
       await checkInBooking(bookingId);
-      // Refresh danh sách sau khi check-in thành công
-      if (keyword.trim()) {
-        await handleSearch();
-      }
+      if (keyword.trim()) await handleSearch();
     } catch (err) {
-      alert(err?.response?.data?.message || err?.message || "Check-in thất bại.");
+      alert(
+        err?.response?.data?.message ||
+          err?.message ||
+          "Check-in thất bại."
+      );
     } finally {
       setProcessingId(null);
     }
@@ -65,22 +101,23 @@ export default function CheckInScanner() {
     setProcessingId(bookingId);
     try {
       await checkOutBooking(bookingId);
-      // Refresh danh sách sau khi check-out thành công
-      if (keyword.trim()) {
-        await handleSearch();
-      }
+      if (keyword.trim()) await handleSearch();
     } catch (err) {
-      alert(err?.response?.data?.message || err?.message || "Check-out thất bại.");
+      alert(
+        err?.response?.data?.message ||
+          err?.message ||
+          "Check-out thất bại."
+      );
     } finally {
       setProcessingId(null);
     }
   };
 
-  const formatDate = (value) => {
+  const formatDateTime = (value) => {
     if (!value) return "—";
     const d = new Date(value);
     if (!Number.isNaN(d.getTime())) {
-      return d.toLocaleDateString("vi-VN", {
+      return d.toLocaleString("vi-VN", {
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
@@ -92,21 +129,12 @@ export default function CheckInScanner() {
   };
 
   const getStatusBadge = (booking) => {
-    // Kiểm tra trạng thái check-in dựa trên isCheckedIn hoặc checkInTime
-    const isCheckedIn = booking.isCheckedIn || !!booking.checkInTime;
-    const isCheckedOut = !!booking.checkOutTime;
-    
-    if (isCheckedOut) {
-      return { type: "secondary", label: "Đã Check-out" };
-    }
-    if (isCheckedIn) {
+    // backend của bạn có isCheckedIn (boolean)
+    // nếu có thêm checkOutTime thì ưu tiên hiển thị check-out
+    if (booking.checkOutTime) return { type: "secondary", label: "Đã Check-out" };
+    if (booking.isCheckedIn || booking.checkInTime)
       return { type: "success", label: "Đã Check-in" };
-    }
-    // Kiểm tra status của booking
-    if (booking.status === "APPROVED") {
-      return { type: "warning", label: "Chưa Check-in" };
-    }
-    return { type: "info", label: booking.status || "PENDING" };
+    return { type: "warning", label: "Chưa Check-in" };
   };
 
   const handleReportIssue = async (e) => {
@@ -126,10 +154,11 @@ export default function CheckInScanner() {
         title: reportData.title,
         description: reportData.description,
         category: reportData.category,
-        imageUrls: reportData.imageUrls.filter(url => url.trim() !== ""),
+        imageUrls: reportData.imageUrls.filter((url) => url.trim() !== ""),
       };
 
       await reportFacilityIssue(Number(reportData.facilityId), payload);
+
       setReportSuccess(true);
       setReportData({
         facilityId: "",
@@ -138,13 +167,17 @@ export default function CheckInScanner() {
         category: "DAMAGE",
         imageUrls: [""],
       });
-      
+
       setTimeout(() => {
         setShowReportForm(false);
         setReportSuccess(false);
       }, 2000);
     } catch (err) {
-      setReportError(err?.response?.data?.message || err?.message || "Báo cáo sự cố thất bại.");
+      setReportError(
+        err?.response?.data?.message ||
+          err?.message ||
+          "Báo cáo sự cố thất bại."
+      );
     } finally {
       setReportLoading(false);
     }
@@ -156,7 +189,10 @@ export default function CheckInScanner() {
 
   const removeImageUrl = (index) => {
     const newUrls = reportData.imageUrls.filter((_, i) => i !== index);
-    setReportData({ ...reportData, imageUrls: newUrls.length > 0 ? newUrls : [""] });
+    setReportData({
+      ...reportData,
+      imageUrls: newUrls.length > 0 ? newUrls : [""],
+    });
   };
 
   const updateImageUrl = (index, value) => {
@@ -169,7 +205,7 @@ export default function CheckInScanner() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-800">Check-in / Check-out</h1>
-        <p className="text-gray-600 mt-1">Tìm kiếm đơn đặt phòng theo tên sinh viên hoặc mã booking</p>
+        <p className="text-gray-600 mt-1">Tìm theo tên SV hoặc mã booking</p>
       </div>
 
       {/* Search Bar */}
@@ -181,7 +217,7 @@ export default function CheckInScanner() {
               type="text"
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
-              onKeyPress={(e) => e.key === "Enter" && handleSearch()}
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
               placeholder="Nhập tên sinh viên hoặc mã booking..."
               className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none"
             />
@@ -202,16 +238,19 @@ export default function CheckInScanner() {
       {bookings.length > 0 && (
         <Card className="overflow-hidden">
           <div className="p-4 border-b bg-gray-50">
-            <h2 className="font-semibold text-gray-800">Kết quả tìm kiếm ({bookings.length})</h2>
+            <h2 className="font-semibold text-gray-800">
+              Kết quả ({bookings.length})
+            </h2>
           </div>
+
           <div className="divide-y">
             {bookings.map((booking) => {
               const statusBadge = getStatusBadge(booking);
-              // Kiểm tra trạng thái check-in dựa trên isCheckedIn hoặc checkInTime
-              const isCheckedIn = booking.isCheckedIn || !!booking.checkInTime;
-              const isCheckedOut = !!booking.checkOutTime;
-              const canCheckIn = !isCheckedIn && booking.status === "APPROVED";
-              const canCheckOut = isCheckedIn && !isCheckedOut;
+
+              // theo swagger: isCheckedIn
+              const canCheckIn = !booking.isCheckedIn && !booking.checkInTime;
+              const canCheckOut =
+                (booking.isCheckedIn || booking.checkInTime) && !booking.checkOutTime;
 
               return (
                 <div key={booking.id} className="p-4 hover:bg-gray-50 transition-colors">
@@ -229,25 +268,22 @@ export default function CheckInScanner() {
                           <User className="w-4 h-4" />
                           <span>{booking.user?.fullName || booking.fullName || "—"}</span>
                         </div>
+
                         <div className="flex items-center gap-2">
                           <Building2 className="w-4 h-4" />
                           <span>{booking.facility?.name || booking.facilityName || "—"}</span>
                         </div>
+
                         <div className="flex items-center gap-2">
                           <Calendar className="w-4 h-4" />
                           <span>
-                            {booking.startTime 
-                              ? formatDate(booking.startTime) 
-                              : formatDate(booking.date || booking.bookingDate)}
+                            {formatDateTime(booking.startTime)} → {formatDateTime(booking.endTime)}
                           </span>
                         </div>
+
                         <div className="flex items-center gap-2">
                           <Clock className="w-4 h-4" />
-                          <span>
-                            {booking.startTime && booking.endTime
-                              ? `${formatDate(booking.startTime).split(" ")[1]} - ${formatDate(booking.endTime).split(" ")[1]}`
-                              : booking.slots?.join(", ") || booking.slot || "—"}
-                          </span>
+                          <span>Trạng thái: {booking.status || "—"}</span>
                         </div>
                       </div>
 
@@ -258,12 +294,12 @@ export default function CheckInScanner() {
                       )}
                       {booking.checkInTime && (
                         <div className="text-xs text-gray-500">
-                          Check-in: {formatDate(booking.checkInTime)}
+                          Check-in: {formatDateTime(booking.checkInTime)}
                         </div>
                       )}
                       {booking.checkOutTime && (
                         <div className="text-xs text-gray-500">
-                          Check-out: {formatDate(booking.checkOutTime)}
+                          Check-out: {formatDateTime(booking.checkOutTime)}
                         </div>
                       )}
                       {booking.status && (
@@ -300,6 +336,7 @@ export default function CheckInScanner() {
                           )}
                         </Button>
                       )}
+
                       {canCheckOut && (
                         <Button
                           variant="secondary"
@@ -326,7 +363,7 @@ export default function CheckInScanner() {
         </Card>
       )}
 
-      {!loading && keyword && bookings.length === 0 && (
+      {!loading && keyword.trim() && bookings.length === 0 && (
         <Card className="p-8 text-center text-gray-500">
           Không tìm thấy đơn đặt phòng nào.
         </Card>
@@ -390,23 +427,19 @@ export default function CheckInScanner() {
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                Tiêu đề *
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5">Tiêu đề *</label>
               <input
                 type="text"
                 required
                 value={reportData.title}
                 onChange={(e) => setReportData({ ...reportData, title: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none"
-                placeholder="Ví dụ: Đèn bàn hỏng, Máy lạnh không hoạt động..."
+                placeholder="Ví dụ: Đèn hỏng, Máy lạnh không hoạt động..."
               />
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                Mô tả chi tiết *
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5">Mô tả chi tiết *</label>
               <textarea
                 required
                 value={reportData.description}
@@ -418,9 +451,7 @@ export default function CheckInScanner() {
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                URL ảnh (tùy chọn)
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5">URL ảnh (tùy chọn)</label>
               <div className="space-y-2">
                 {reportData.imageUrls.map((url, index) => (
                   <div key={index} className="flex gap-2">
@@ -466,11 +497,7 @@ export default function CheckInScanner() {
             )}
 
             <div className="flex gap-3">
-              <Button
-                type="submit"
-                disabled={reportLoading}
-                className="flex-1"
-              >
+              <Button type="submit" disabled={reportLoading} className="flex-1">
                 {reportLoading ? "Đang gửi..." : "Gửi báo cáo"}
               </Button>
               <Button

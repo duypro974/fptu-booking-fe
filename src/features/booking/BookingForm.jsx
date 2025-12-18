@@ -3,6 +3,7 @@ import { useAuth } from "../../context/AuthContext";
 import { api } from "../../services/api";
 import Button from "../../components/ui/Button";
 import { Calendar, Users, FileText, AlertCircle, Loader2, CalendarCheck } from "lucide-react";
+import { toDateISO_Local, buildDateTimeVN } from "../../lib/utils";
 
 export default function BookingForm({ 
   room, 
@@ -45,7 +46,7 @@ export default function BookingForm({
     try {
       console.log('[BookingForm] Submitting booking:', {
         facilityId: room.id,
-        date: selectedDate || new Date().toISOString().split('T')[0],
+       date: selectedDate || toDateISO_Local(new Date()),
         slotIds: selectedSlots,
         purpose: purpose.trim(),
         participants: parseInt(participants),
@@ -54,7 +55,7 @@ export default function BookingForm({
 
       const result = await api.createBooking({
         facilityId: room.id,
-        date: selectedDate || new Date().toISOString().split('T')[0],
+       date: selectedDate || toDateISO_Local(new Date()),
         slotIds: selectedSlots,
         purpose: purpose.trim(),
         participants: parseInt(participants),
@@ -93,7 +94,7 @@ export default function BookingForm({
           <div className="flex justify-between">
             <span className="text-gray-600">Ngày:</span>
             <span className="font-semibold text-gray-900">
-              {selectedDate || new Date().toLocaleDateString('vi-VN')}
+              {selectedDate || toDateISO_Local(new Date())}
             </span>
           </div>
           <div className="flex justify-between">
