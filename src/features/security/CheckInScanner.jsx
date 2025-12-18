@@ -92,13 +92,21 @@ export default function CheckInScanner() {
   };
 
   const getStatusBadge = (booking) => {
-    if (booking.checkInTime && !booking.checkOutTime) {
-      return { type: "success", label: "Đã Check-in" };
-    }
-    if (booking.checkOutTime) {
+    // Kiểm tra trạng thái check-in dựa trên isCheckedIn hoặc checkInTime
+    const isCheckedIn = booking.isCheckedIn || !!booking.checkInTime;
+    const isCheckedOut = !!booking.checkOutTime;
+    
+    if (isCheckedOut) {
       return { type: "secondary", label: "Đã Check-out" };
     }
-    return { type: "warning", label: "Chưa Check-in" };
+    if (isCheckedIn) {
+      return { type: "success", label: "Đã Check-in" };
+    }
+    // Kiểm tra status của booking
+    if (booking.status === "APPROVED") {
+      return { type: "warning", label: "Chưa Check-in" };
+    }
+    return { type: "info", label: booking.status || "PENDING" };
   };
 
   const handleReportIssue = async (e) => {
@@ -199,8 +207,11 @@ export default function CheckInScanner() {
           <div className="divide-y">
             {bookings.map((booking) => {
               const statusBadge = getStatusBadge(booking);
-              const canCheckIn = !booking.checkInTime;
-              const canCheckOut = booking.checkInTime && !booking.checkOutTime;
+              // Kiểm tra trạng thái check-in dựa trên isCheckedIn hoặc checkInTime
+              const isCheckedIn = booking.isCheckedIn || !!booking.checkInTime;
+              const isCheckedOut = !!booking.checkOutTime;
+              const canCheckIn = !isCheckedIn && booking.status === "APPROVED";
+              const canCheckOut = isCheckedIn && !isCheckedOut;
 
               return (
                 <div key={booking.id} className="p-4 hover:bg-gray-50 transition-colors">
@@ -224,14 +235,27 @@ export default function CheckInScanner() {
                         </div>
                         <div className="flex items-center gap-2">
                           <Calendar className="w-4 h-4" />
-                          <span>{formatDate(booking.date || booking.bookingDate)}</span>
+                          <span>
+                            {booking.startTime 
+                              ? formatDate(booking.startTime) 
+                              : formatDate(booking.date || booking.bookingDate)}
+                          </span>
                         </div>
                         <div className="flex items-center gap-2">
                           <Clock className="w-4 h-4" />
-                          <span>Slot: {booking.slots?.join(", ") || booking.slot || "—"}</span>
+                          <span>
+                            {booking.startTime && booking.endTime
+                              ? `${formatDate(booking.startTime).split(" ")[1]} - ${formatDate(booking.endTime).split(" ")[1]}`
+                              : booking.slots?.join(", ") || booking.slot || "—"}
+                          </span>
                         </div>
                       </div>
 
+                      {booking.startTime && booking.endTime && (
+                        <div className="text-xs text-gray-500">
+                          Thời gian: {formatDate(booking.startTime)} - {formatDate(booking.endTime)}
+                        </div>
+                      )}
                       {booking.checkInTime && (
                         <div className="text-xs text-gray-500">
                           Check-in: {formatDate(booking.checkInTime)}
@@ -240,6 +264,20 @@ export default function CheckInScanner() {
                       {booking.checkOutTime && (
                         <div className="text-xs text-gray-500">
                           Check-out: {formatDate(booking.checkOutTime)}
+                        </div>
+                      )}
+                      {booking.status && (
+                        <div className="text-xs">
+                          <Badge 
+                            type={
+                              booking.status === "APPROVED" ? "success" :
+                              booking.status === "PENDING" ? "warning" :
+                              booking.status === "REJECTED" ? "danger" : "info"
+                            }
+                            className="text-xs"
+                          >
+                            {booking.status}
+                          </Badge>
                         </div>
                       )}
                     </div>
