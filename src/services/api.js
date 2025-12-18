@@ -2,12 +2,13 @@
 // src/services/api.js
 
 import axios from "axios";
-import { apiRequest } from '../config/api';
-import * as adminService from './adminService';
-import * as facilityService from './facilityService';
-import * as equipmentService from './equipmentService';
-import * as clubService from './clubService';
-import * as bookingService from './bookingService';
+import { apiRequest } from "../config/api";
+import * as adminService from "./adminService";
+import * as facilityService from "./facilityService";
+import * as equipmentService from "./equipmentService";
+import * as clubService from "./clubService";
+import * as bookingService from "./bookingService";
+import * as securityService from "./securityService"; // ✅ THÊM
 
 // ========== CONFIGURATION ==========
 // API Mode: REAL API ONLY (Mock đã được loại bỏ)
@@ -18,8 +19,8 @@ console.log(`[API Config] Using REAL API`);
 const getAxiosBaseUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL || "http://localhost:6969";
   // Nếu URL không kết thúc bằng /api, thêm /api vào
-  if (!envUrl.endsWith('/api')) {
-    return envUrl.endsWith('/') ? `${envUrl}api` : `${envUrl}/api`;
+  if (!envUrl.endsWith("/api")) {
+    return envUrl.endsWith("/") ? `${envUrl}api` : `${envUrl}/api`;
   }
   return envUrl;
 };
@@ -45,7 +46,6 @@ axiosClient.interceptors.request.use((config) => {
   return config;
 });
 
-
 // Response interceptor
 axiosClient.interceptors.response.use(
   (res) => res,
@@ -54,7 +54,7 @@ axiosClient.interceptors.response.use(
 
 // Helper: Map campus string (hcm, hn) sang campusId number cho backend
 const getCampusId = (campus) => {
-  if (typeof campus === 'number') return campus;
+  if (typeof campus === "number") return campus;
   const campusMap = { hcm: 2, hn: 1, dn: 3, ct: 4, qn: 5 };
   return campusMap[campus?.toLowerCase()] || null;
 };
@@ -81,11 +81,13 @@ export const api = {
   createBooking: bookingService.createBookingWithFormat,
   scanRecurringAvailability: bookingService.scanRecurringAvailability,
   createRecurringBooking: bookingService.createRecurringBooking,
-  
+
   // Lấy lịch biểu của phòng (theo ngày)
   // TODO: API này chưa có endpoint từ backend, cần implement sau
   getRoomSchedule: async (facilityId, date, viewType = "day") => {
-    throw new Error('getRoomSchedule API chưa được implement - cần backend endpoint');
+    throw new Error(
+      "getRoomSchedule API chưa được implement - cần backend endpoint"
+    );
   },
 
   // ========== CLUB APIs ==========
@@ -95,51 +97,70 @@ export const api = {
       // Map để giữ format cũ với limit
       const params = new URLSearchParams();
       if (campusId) {
-        params.append('campusId', campusId);
+        params.append("campusId", campusId);
       }
-      params.append('limit', '1000');
-      
+      params.append("limit", "1000");
+
       const queryString = params.toString();
-      const allClubs = await apiRequest(`/clubs${queryString ? `?${queryString}` : ''}`);
-      console.log('[getClubs] Raw clubs data:', allClubs);
-      console.log('[getClubs] Total clubs received:', allClubs?.length || 0);
-      
-      return allClubs.map(c => ({
+      const allClubs = await apiRequest(
+        `/clubs${queryString ? `?${queryString}` : ""}`
+      );
+      console.log("[getClubs] Raw clubs data:", allClubs);
+      console.log(
+        "[getClubs] Total clubs received:",
+        allClubs?.length || 0
+      );
+
+      return allClubs.map((c) => ({
         ...c,
-        description: c.description || '',
-        campus: c.campusId === 1 ? 'hn' : (c.campusId === 2 ? 'hcm' : 'other')
+        description: c.description || "",
+        campus: c.campusId === 1 ? "hn" : c.campusId === 2 ? "hcm" : "other",
       }));
     } catch (error) {
-      console.error('[getClubs] Error:', error);
+      console.error("[getClubs] Error:", error);
       throw error;
     }
   },
+
   getClubPriorityRooms: async (clubId) => {
     try {
       const priorities = await clubService.getClubPriorities(clubId);
-      console.log('[getClubPriorityRooms] Raw priorities for club', clubId, ':', priorities);
-      console.log('[getClubPriorityRooms] Raw priorities count:', priorities?.length || 0);
-      
-      const mapped = priorities.map(p => {
+      console.log(
+        "[getClubPriorityRooms] Raw priorities for club",
+        clubId,
+        ":",
+        priorities
+      );
+      console.log(
+        "[getClubPriorityRooms] Raw priorities count:",
+        priorities?.length || 0
+      );
+
+      const mapped = priorities.map((p) => {
         const facilityId = p.facilityId || p.id || p.facility?.id;
-        const name = p.facility?.name || p.name || p.facilityName || null;
+        const name =
+          p.facility?.name || p.name || p.facilityName || null;
         return {
           id: facilityId,
           name: name,
           facilityId: facilityId,
           facility: p.facility,
           isPriority: true,
-          ...p
+          ...p,
         };
       });
-      
-      console.log('[getClubPriorityRooms] Mapped priorities count:', mapped.length);
+
+      console.log(
+        "[getClubPriorityRooms] Mapped priorities count:",
+        mapped.length
+      );
       return mapped;
     } catch (error) {
-      console.error('[getClubPriorityRooms] Error:', error);
+      console.error("[getClubPriorityRooms] Error:", error);
       throw error;
     }
   },
+
   createClub: clubService.createClub,
   updateClub: clubService.updateClub,
   deleteClub: clubService.deleteClub,
@@ -147,16 +168,20 @@ export const api = {
   // ========== MY BOOKINGS ==========
   // Re-export từ bookingService
   getMyBookings: bookingService.getMyBookings,
+
   cancelBooking: async (bookingId, reason) => {
     try {
       const payload = reason ? { reason } : {};
       const data = await apiRequest(`/bookings/${bookingId}/cancel`, {
-        method: 'PATCH',
-        body: Object.keys(payload).length > 0 ? JSON.stringify(payload) : undefined
+        method: "PATCH",
+        body:
+          Object.keys(payload).length > 0
+            ? JSON.stringify(payload)
+            : undefined,
       });
       return data;
     } catch (error) {
-      console.error('[cancelBooking] Error:', error);
+      console.error("[cancelBooking] Error:", error);
       throw error;
     }
   },
@@ -166,13 +191,16 @@ export const api = {
   getPendingApprovals: async (campus) => {
     try {
       const campusId = getCampusId(campus);
-      const params = campusId ? `?campusId=${campusId}` : '';
+      const params = campusId ? `?campusId=${campusId}` : "";
       const data = await apiRequest(`/bookings/pending-approvals${params}`);
       return Array.isArray(data) ? data : [];
     } catch (error) {
-      console.error('[getPendingApprovals] Error:', error);
+      console.error("[getPendingApprovals] Error:", error);
       // Nếu 404, trả về empty array
-      if (error.message?.includes('404') || error.message?.includes('Not Found')) {
+      if (
+        error.message?.includes("404") ||
+        error.message?.includes("Not Found")
+      ) {
         return [];
       }
       throw error;
@@ -183,13 +211,16 @@ export const api = {
   getAllConflicts: async (campus) => {
     try {
       const campusId = getCampusId(campus);
-      const params = campusId ? `?campusId=${campusId}` : '';
+      const params = campusId ? `?campusId=${campusId}` : "";
       const data = await apiRequest(`/bookings/conflicts${params}`);
       return Array.isArray(data) ? data : [];
     } catch (error) {
-      console.error('[getAllConflicts] Error:', error);
+      console.error("[getAllConflicts] Error:", error);
       // Nếu 404, trả về empty array
-      if (error.message?.includes('404') || error.message?.includes('Not Found')) {
+      if (
+        error.message?.includes("404") ||
+        error.message?.includes("Not Found")
+      ) {
         return [];
       }
       throw error;
@@ -197,54 +228,69 @@ export const api = {
   },
 
   // GET /bookings/conflicts?campusId - Xem conflicts của một booking cụ thể
-  // Lưu ý: Backend chỉ có endpoint /bookings/conflicts (lấy tất cả), không có /bookings/{id}/conflicts
-  // Nên cần gọi /bookings/conflicts và filter theo bookingId client-side
+  // Backend chỉ có endpoint /bookings/conflicts (lấy tất cả), không có /bookings/{id}/conflicts
   checkBookingConflicts: async (bookingId, campus) => {
     try {
       const campusId = getCampusId(campus);
-      const params = campusId ? `?campusId=${campusId}` : '';
-      // Gọi endpoint đúng: /bookings/conflicts (không có {id} trong path)
+      const params = campusId ? `?campusId=${campusId}` : "";
       const allConflicts = await apiRequest(`/bookings/conflicts${params}`);
       const conflictsArray = Array.isArray(allConflicts) ? allConflicts : [];
-      
-      // Filter conflicts liên quan đến booking này
-      // Conflict có thể có bookingId, facilityId, hoặc các field khác để match
-      const relatedConflicts = conflictsArray.filter(conflict => {
-        // Kiểm tra nếu conflict liên quan đến booking này
-        // Có thể match theo: id, bookingId, facilityId, startTime, endTime
-        return conflict.id === bookingId || 
-               conflict.bookingId === bookingId ||
-               (conflict.facilityId && conflict.facilityId === bookingId);
+
+      const relatedConflicts = conflictsArray.filter((conflict) => {
+        return (
+          conflict.id === bookingId ||
+          conflict.bookingId === bookingId ||
+          (conflict.facilityId && conflict.facilityId === bookingId)
+        );
       });
-      
-      console.log('[checkBookingConflicts] Found', relatedConflicts.length, 'conflicts for booking', bookingId, 'out of', conflictsArray.length, 'total conflicts');
+
+      console.log(
+        "[checkBookingConflicts] Found",
+        relatedConflicts.length,
+        "conflicts for booking",
+        bookingId,
+        "out of",
+        conflictsArray.length,
+        "total conflicts"
+      );
       return relatedConflicts;
     } catch (error) {
-      console.error('[checkBookingConflicts] Error:', error);
-      // Nếu 404 hoặc bất kỳ lỗi nào, trả về empty array (không có conflict)
-      // Không throw error để không chặn logic tiếp theo
-      if (error.message?.includes('404') || error.message?.includes('Not Found')) {
-        console.warn('[checkBookingConflicts] 404 - Endpoint không tồn tại, giả sử không có conflict');
+      console.error("[checkBookingConflicts] Error:", error);
+      if (
+        error.message?.includes("404") ||
+        error.message?.includes("Not Found")
+      ) {
+        console.warn(
+          "[checkBookingConflicts] 404 - Endpoint không tồn tại, giả sử không có conflict"
+        );
       }
       return [];
     }
   },
 
   // PATCH /bookings/{id}/approve
-  approveBooking: async (bookingId, campus, adminName, alternativeFacilityId = null) => {
+  approveBooking: async (
+    bookingId,
+    campus,
+    adminName,
+    alternativeFacilityId = null
+  ) => {
     try {
       const payload = {};
       if (alternativeFacilityId) {
         payload.alternativeFacilityId = alternativeFacilityId;
       }
-      
+
       const data = await apiRequest(`/bookings/${bookingId}/approve`, {
-        method: 'PATCH',
-        body: Object.keys(payload).length > 0 ? JSON.stringify(payload) : undefined
+        method: "PATCH",
+        body:
+          Object.keys(payload).length > 0
+            ? JSON.stringify(payload)
+            : undefined,
       });
       return data;
     } catch (error) {
-      console.error('[approveBooking] Error:', error);
+      console.error("[approveBooking] Error:", error);
       throw error;
     }
   },
@@ -253,12 +299,12 @@ export const api = {
   rejectBooking: async (bookingId, reason, adminName) => {
     try {
       const data = await apiRequest(`/bookings/${bookingId}/reject`, {
-        method: 'PATCH',
-        body: JSON.stringify({ reason })
+        method: "PATCH",
+        body: JSON.stringify({ reason }),
       });
       return data;
     } catch (error) {
-      console.error('[rejectBooking] Error:', error);
+      console.error("[rejectBooking] Error:", error);
       throw error;
     }
   },
@@ -268,14 +314,19 @@ export const api = {
   getFacilityEquipment: async (facilityId) => {
     try {
       const data = await apiRequest(`/equipment/facilities/${facilityId}`);
-      // API trả về mảng string tên thiết bị: ["Máy chiếu", "Loa", "Bàn ghế"]
       return Array.isArray(data) ? data : [];
     } catch (error) {
-      console.error('[getFacilityEquipment] Error:', error);
-      // Nếu lỗi, trả về mảng rỗng thay vì throw để không block UI
+      console.error("[getFacilityEquipment] Error:", error);
       return [];
     }
   },
+
+  // ========== SECURITY (GUARD) APIs ==========
+  // ✅ Thêm các API cho bảo vệ: xem đơn, mở cửa (check-in), đóng cửa (check-out), báo cáo sự cố
+  guardSearchBookings: securityService.searchCheckinBookings,
+  guardCheckIn: securityService.checkInBooking,
+  guardCheckOut: securityService.checkOutBooking,
+  reportFacilityIssue: securityService.reportFacilityIssue,
 };
 
 // Export default là axios instance để các service khác dùng (bookingService, resourceService, etc.)

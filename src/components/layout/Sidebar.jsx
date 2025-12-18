@@ -55,7 +55,7 @@ export default function Sidebar({ isOpen }) {
 
   const SECURITY_MENU = [
     { icon: CheckSquare, label: "Check-in/Out", path: "/security/checkin" },
-    { icon: Calendar, label: "Lịch hôm nay", path: "/security/schedule" },
+    
   ];
 
   const SYSTEM_ADMIN_MENU = [

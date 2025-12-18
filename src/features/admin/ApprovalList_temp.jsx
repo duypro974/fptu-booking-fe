@@ -87,7 +87,7 @@ export default function ApprovalList() {
         let date = item.date || item.bookingDate || item.startDate;
         if (!date && item.startTime) {
           const startDate = new Date(item.startTime);
-          date = startDate.toISOString().split('T')[0]; // Format: YYYY-MM-DD
+         date: selectedDate || toDateISO_Local(new Date()),
         }
         
         // Map startTime và endTime
