@@ -128,6 +128,19 @@ export default function CheckInScanner() {
     return String(value);
   };
 
+  const formatDate = (value) => {
+    if (!value) return "—";
+    const d = new Date(value);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString("vi-VN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+    }
+    return String(value);
+  };
+
   const getStatusBadge = (booking) => {
     // backend của bạn có isCheckedIn (boolean)
     // nếu có thêm checkOutTime thì ưu tiên hiển thị check-out
@@ -287,6 +300,11 @@ export default function CheckInScanner() {
                         </div>
                       </div>
 
+                      {booking.startTime && booking.endTime && (
+                        <div className="text-xs text-gray-500">
+                          Thời gian: {formatDate(booking.startTime)} - {formatDate(booking.endTime)}
+                        </div>
+                      )}
                       {booking.checkInTime && (
                         <div className="text-xs text-gray-500">
                           Check-in: {formatDateTime(booking.checkInTime)}
@@ -295,6 +313,20 @@ export default function CheckInScanner() {
                       {booking.checkOutTime && (
                         <div className="text-xs text-gray-500">
                           Check-out: {formatDateTime(booking.checkOutTime)}
+                        </div>
+                      )}
+                      {booking.status && (
+                        <div className="text-xs">
+                          <Badge 
+                            type={
+                              booking.status === "APPROVED" ? "success" :
+                              booking.status === "PENDING" ? "warning" :
+                              booking.status === "REJECTED" ? "danger" : "info"
+                            }
+                            className="text-xs"
+                          >
+                            {booking.status}
+                          </Badge>
                         </div>
                       )}
                     </div>

@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { api } from "../../services/api";
+import { getMyBookings } from "../../services/bookingService";
 import Button from "../../components/ui/Button";
 import { Calendar, Users, FileText, AlertCircle, Loader2, CalendarCheck } from "lucide-react";
 import { toDateISO_Local, buildDateTimeVN } from "../../lib/utils";
@@ -18,6 +19,9 @@ export default function BookingForm({
   const [participants, setParticipants] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [userBookings, setUserBookings] = useState([]);
+  const [conflictWarning, setConflictWarning] = useState("");
+  const [checkingConflict, setCheckingConflict] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -41,6 +45,20 @@ export default function BookingForm({
       setError("Vui lòng chọn ít nhất 1 slot");
       setLoading(false);
       return;
+    }
+
+    // Validate conflict trước khi submit
+    const timeRange = calculateTimeRange(selectedDate || toDateISO_Local(new Date()), selectedSlots);
+    if (timeRange) {
+      const conflict = checkUserConflict(timeRange.startTime, timeRange.endTime, userBookings);
+      if (conflict) {
+        const conflictRoom = conflict.facility?.name || conflict.facilityName || "phòng khác";
+        setError(
+          `Bạn không thể đặt phòng vì đã có lịch tại ${conflictRoom} (Trạng thái: ${conflict.status}) trong khung giờ này.`
+        );
+        setLoading(false);
+        return;
+      }
     }
 
     try {
@@ -76,6 +94,102 @@ export default function BookingForm({
   };
 
   const maxCapacity = facilityDetail?.capacity || room?.capacity || 0;
+
+  // Slot definitions (giống backend)
+  const SLOT_DEFS = [
+    { id: 1, start: "07:00", end: "09:00" },
+    { id: 2, start: "09:00", end: "11:00" },
+    { id: 3, start: "11:00", end: "13:00" },
+    { id: 4, start: "13:00", end: "15:00" },
+    { id: 5, start: "15:00", end: "17:00" },
+  ];
+
+  // Tính toán time range từ selectedSlots và selectedDate
+  const calculateTimeRange = (date, slotIds) => {
+    if (!date || !slotIds || slotIds.length === 0) return null;
+
+    const sortedSlots = [...slotIds].map(Number).sort((a, b) => a - b);
+    const firstSlot = SLOT_DEFS.find(s => s.id === sortedSlots[0]);
+    const lastSlot = SLOT_DEFS.find(s => s.id === sortedSlots[sortedSlots.length - 1]);
+
+    if (!firstSlot || !lastSlot) return null;
+
+    // Build datetime với timezone VN (giống backend)
+    // date format: YYYY-MM-DD
+    const startTime = buildDateTimeVN(date, parseInt(firstSlot.start.split(':')[0]), parseInt(firstSlot.start.split(':')[1]));
+    const endTime = buildDateTimeVN(date, parseInt(lastSlot.end.split(':')[0]), parseInt(lastSlot.end.split(':')[1]));
+
+    return { startTime, endTime };
+  };
+
+  // Check conflict với user bookings hiện tại
+  const checkUserConflict = (startTime, endTime, bookings) => {
+    if (!startTime || !endTime || !bookings || bookings.length === 0) return null;
+
+    return bookings.find(booking => {
+      // Chỉ check bookings APPROVED hoặc PENDING
+      if (booking.status !== "APPROVED" && booking.status !== "PENDING") return false;
+
+      const bookingStart = new Date(booking.startTime || booking.date || booking.bookingDate);
+      const bookingEnd = new Date(booking.endTime || booking.date || booking.bookingDate);
+
+      // Check overlap: startTime < bookingEnd && endTime > bookingStart
+      return startTime < bookingEnd && endTime > bookingStart;
+    });
+  };
+
+  // Load user bookings và check conflict khi selectedSlots hoặc selectedDate thay đổi
+  useEffect(() => {
+    if (!user || !selectedDate || !selectedSlots || selectedSlots.length === 0) {
+      setUserBookings([]);
+      setConflictWarning("");
+      return;
+    }
+
+    const loadAndCheck = async () => {
+      setCheckingConflict(true);
+      setConflictWarning("");
+      
+      try {
+        const bookings = await getMyBookings();
+        const list = Array.isArray(bookings) ? bookings : bookings?.items ?? bookings?.data ?? [];
+        setUserBookings(list);
+
+        // Tính time range từ selectedSlots
+        const timeRange = calculateTimeRange(selectedDate, selectedSlots);
+        if (!timeRange) {
+          setCheckingConflict(false);
+          return;
+        }
+
+        // Check conflict
+        const conflict = checkUserConflict(timeRange.startTime, timeRange.endTime, list);
+        if (conflict) {
+          const conflictRoom = conflict.facility?.name || conflict.facilityName || "phòng khác";
+          const conflictTime = conflict.startTime 
+            ? new Date(conflict.startTime).toLocaleString("vi-VN", { 
+                year: "numeric", 
+                month: "2-digit", 
+                day: "2-digit", 
+                hour: "2-digit", 
+                minute: "2-digit" 
+              })
+            : "—";
+          
+          setConflictWarning(
+            `⚠️ Bạn đã có lịch tại ${conflictRoom} (${conflict.status}) vào ${conflictTime}. Bạn không thể đặt phòng trong khung giờ này.`
+          );
+        }
+      } catch (err) {
+        console.warn('[BookingForm] Error loading user bookings for conflict check:', err);
+        // Không block user nếu không load được bookings
+      } finally {
+        setCheckingConflict(false);
+      }
+    };
+
+    loadAndCheck();
+  }, [user, selectedDate, selectedSlots]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6 animate-fade-in">
@@ -142,6 +256,22 @@ export default function BookingForm({
             </p>
           )}
         </div>
+
+        {/* Conflict warning */}
+        {conflictWarning && (
+          <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg flex items-start gap-2">
+            <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+            <p className="text-sm">{conflictWarning}</p>
+          </div>
+        )}
+
+        {/* Checking conflict indicator */}
+        {checkingConflict && (
+          <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-lg flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <p className="text-sm">Đang kiểm tra lịch trình của bạn...</p>
+          </div>
+        )}
 
         {/* Error message */}
         {error && (

@@ -32,6 +32,7 @@ import HistoryLog from "./features/admin/HistoryLog";
 
 // Security
 import CheckInScanner from "./features/security/CheckInScanner";
+import DailySchedule from "./security/DailySchedule";
 
 const MainLayout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -147,6 +148,7 @@ function App() {
               {/* SECURITY */}
               <Route element={<ProtectedRoute roles={["SECURITY", "SECURITY_GUARD"]} />}>
                 <Route path="security/checkin" element={<CheckInScanner />} />
+                <Route path="security/schedule" element={<DailySchedule />} />
               </Route>
 
               {/* STUDENT / LECTURER / CLUB_LEADER */}

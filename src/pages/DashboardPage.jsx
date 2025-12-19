@@ -1,12 +1,156 @@
 /* eslint-disable no-unused-vars */
-import { Calendar, Clock, Bell, ArrowRight, Zap, MapPin, Activity } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { Calendar, Clock, Bell, ArrowRight, Zap, MapPin, Activity, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
+import { getMyBookings } from "../services/bookingService";
+
+// Helper để format slot từ startTime và endTime
+const getSlotLabelFromTimes = (startTime, endTime) => {
+  if (!startTime || !endTime) return "—";
+  
+  const start = new Date(startTime);
+  const end = new Date(endTime);
+  
+  const formatHHmm = (date) => {
+    return date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+  };
+  
+  const s = formatHHmm(start);
+  const e = formatHHmm(end);
+  
+  // Slot definitions (giống backend)
+  const SLOT_DEFS = [
+    { id: 1, start: "07:00", end: "09:00" },
+    { id: 2, start: "09:00", end: "11:00" },
+    { id: 3, start: "11:00", end: "13:00" },
+    { id: 4, start: "13:00", end: "15:00" },
+    { id: 5, start: "15:00", end: "17:00" },
+  ];
+  
+  // Tìm slot đơn lẻ
+  const singleMatch = SLOT_DEFS.find((x) => x.start === s && x.end === e);
+  if (singleMatch) {
+    return `Slot ${singleMatch.id} (${singleMatch.start} - ${singleMatch.end})`;
+  }
+  
+  // Tìm nhiều slot liên tiếp
+  const startSlot = SLOT_DEFS.find((x) => x.start === s);
+  const endSlot = SLOT_DEFS.find((x) => x.end === e);
+  
+  if (startSlot && endSlot && startSlot.id <= endSlot.id) {
+    const slotIds = [];
+    for (let i = startSlot.id; i <= endSlot.id; i++) {
+      slotIds.push(i);
+    }
+    if (slotIds.length > 1) {
+      return `Slot ${slotIds.join(", ")} (${s} - ${e})`;
+    }
+  }
+  
+  return `${s} - ${e}`;
+};
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const fetchBookings = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const data = await getMyBookings();
+        const list = Array.isArray(data) ? data : data?.items ?? data?.data ?? [];
+        setBookings(Array.isArray(list) ? list : []);
+      } catch (e) {
+        setBookings([]);
+        setError(e?.message || "Không thể tải dữ liệu");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (user) {
+      fetchBookings();
+    }
+  }, [user]);
+
+  // Tính toán stats từ bookings thật
+  const stats = useMemo(() => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    // Lịch đặt sắp tới (APPROVED hoặc PENDING, chưa qua)
+    const upcomingBookings = bookings.filter(booking => {
+      const startTime = booking?.startTime || 
+                       (booking?.isGroup && booking?.bookings?.[0]?.startTime) ||
+                       booking?.date || 
+                       booking?.bookingDate;
+      if (!startTime) return false;
+      const start = new Date(startTime);
+      return start >= today && (booking?.status === "APPROVED" || booking?.status === "PENDING");
+    });
+
+    // Tính tổng giờ sử dụng trong tháng này (chỉ APPROVED)
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    let totalHours = 0;
+    
+    bookings.forEach(booking => {
+      if (booking?.status !== "APPROVED") return;
+      
+      const startTime = booking?.startTime || 
+                       (booking?.isGroup && booking?.bookings?.[0]?.startTime);
+      const endTime = booking?.endTime || 
+                     (booking?.isGroup && booking?.bookings?.[0]?.endTime);
+      
+      if (startTime && endTime) {
+        const start = new Date(startTime);
+        const end = new Date(endTime);
+        
+        if (start.getMonth() === currentMonth && start.getFullYear() === currentYear) {
+          const hours = (end - start) / (1000 * 60 * 60);
+          totalHours += hours;
+        }
+      }
+    });
+
+    return {
+      upcomingCount: upcomingBookings.length,
+      totalHours: totalHours.toFixed(1),
+      notificationsCount: 0 // Chưa có API notifications
+    };
+  }, [bookings]);
+
+  // Lấy bookings hôm nay và sắp tới
+  const todayBookings = useMemo(() => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    return bookings
+      .filter(booking => {
+        const startTime = booking?.startTime || 
+                         (booking?.isGroup && booking?.bookings?.[0]?.startTime) ||
+                         booking?.date || 
+                         booking?.bookingDate;
+        if (!startTime) return false;
+        const start = new Date(startTime);
+        return start >= today && start < tomorrow;
+      })
+      .sort((a, b) => {
+        const aTime = new Date(a?.startTime || (a?.isGroup && a?.bookings?.[0]?.startTime) || a?.date || 0);
+        const bTime = new Date(b?.startTime || (b?.isGroup && b?.bookings?.[0]?.startTime) || b?.date || 0);
+        return aTime - bTime;
+      })
+      .slice(0, 5); // Chỉ lấy 5 booking đầu tiên
+  }, [bookings]);
 
   return (
     <div className="space-y-8 animate-fade-in max-w-7xl mx-auto">
@@ -36,30 +180,39 @@ export default function DashboardPage() {
       </div>
 
       {/* 2. Quick Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <StatsCard 
-          icon={Calendar} 
-          color="blue" 
-          label="Lịch đặt sắp tới" 
-          value="02" 
-          desc="Booking đang chờ bạn" 
-        />
-        <StatsCard 
-          icon={Clock} 
-          color="orange" 
-          label="Giờ sử dụng (T12)" 
-          value="12.5h" 
-          desc="Tăng 20% so với tháng trước" 
-          trend="up"
-        />
-        <StatsCard 
-          icon={Bell} 
-          color="purple" 
-          label="Thông báo mới" 
-          value="05" 
-          desc="2 tin quan trọng từ Campus" 
-        />
-      </div>
+      {loading ? (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {[1, 2, 3].map(i => (
+            <Card key={i} className="animate-pulse">
+              <div className="h-24 bg-gray-200 rounded"></div>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <StatsCard 
+            icon={Calendar} 
+            color="blue" 
+            label="Lịch đặt sắp tới" 
+            value={stats.upcomingCount.toString().padStart(2, '0')} 
+            desc="Booking đang chờ bạn" 
+          />
+          <StatsCard 
+            icon={Clock} 
+            color="orange" 
+            label={`Giờ sử dụng (T${new Date().getMonth() + 1})`}
+            value={`${stats.totalHours}h`} 
+            desc="Tổng giờ đã sử dụng tháng này" 
+          />
+          <StatsCard 
+            icon={Bell} 
+            color="purple" 
+            label="Thông báo mới" 
+            value={stats.notificationsCount.toString().padStart(2, '0')} 
+            desc="Tin tức từ Campus" 
+          />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
@@ -76,50 +229,99 @@ export default function DashboardPage() {
           </div>
           
           <div className="space-y-4">
-            {/* Booking Item 1 */}
-            <div className="group bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:shadow-md hover:border-orange-200 transition-all flex items-center gap-5">
-              <div className="flex-shrink-0 flex flex-col items-center justify-center w-16 h-16 bg-orange-50 rounded-lg text-orange-600">
-                <span className="text-xs font-bold uppercase">Thg 12</span>
-                <span className="text-2xl font-bold">09</span>
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-6 h-6 animate-spin text-orange-600" />
+                <span className="ml-2 text-gray-600">Đang tải lịch trình...</span>
               </div>
-              <div className="flex-1">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="font-bold text-gray-900 text-lg group-hover:text-orange-600 transition-colors">Phòng Seminar 201</h3>
-                    <p className="text-gray-500 text-sm flex items-center gap-2 mt-1">
-                      <Clock className="w-4 h-4" /> 09:30 - 11:45 (Slot 2)
-                    </p>
-                  </div>
-                  <span className="px-3 py-1 bg-green-100 text-green-700 text-xs rounded-full font-bold border border-green-200">
-                    Đã duyệt
-                  </span>
-                </div>
+            ) : todayBookings.length === 0 ? (
+              <div className="text-center py-12 bg-gray-50 rounded-xl border border-gray-200">
+                <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                <p className="text-gray-600 font-medium">Không có lịch đặt phòng hôm nay</p>
+                <Link to="/booking">
+                  <Button className="mt-4 bg-orange-600 hover:bg-orange-700 text-white">
+                    + Đặt phòng ngay
+                  </Button>
+                </Link>
               </div>
-              <Link to="/history" className="p-2 text-gray-300 group-hover:text-orange-600 transition-colors">
-                <ArrowRight className="w-5 h-5" />
-              </Link>
-            </div>
+            ) : (
+              todayBookings.map((booking) => {
+                const startTime = booking?.startTime || 
+                                 (booking?.isGroup && booking?.bookings?.[0]?.startTime) ||
+                                 booking?.date || 
+                                 booking?.bookingDate;
+                const endTime = booking?.endTime || 
+                               (booking?.isGroup && booking?.bookings?.[0]?.endTime);
+                
+                const start = startTime ? new Date(startTime) : null;
+                const facilityName = booking?.facilityName || 
+                                   booking?.facility?.name || 
+                                   booking?.roomName || 
+                                   "—";
+                
+                const status = booking?.status?.toUpperCase();
+                const statusConfig = {
+                  APPROVED: { label: "Đã duyệt", bg: "bg-green-100", text: "text-green-700", border: "border-green-200" },
+                  PENDING: { label: "Chờ duyệt", bg: "bg-yellow-100", text: "text-yellow-700", border: "border-yellow-200" },
+                  REJECTED: { label: "Bị từ chối", bg: "bg-red-100", text: "text-red-700", border: "border-red-200" },
+                  CANCELLED: { label: "Đã hủy", bg: "bg-gray-100", text: "text-gray-700", border: "border-gray-200" }
+                };
+                const statusInfo = statusConfig[status] || statusConfig.PENDING;
 
-            {/* Booking Item 2 */}
-            <div className="group bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:shadow-md hover:border-orange-200 transition-all flex items-center gap-5 opacity-80">
-              <div className="flex-shrink-0 flex flex-col items-center justify-center w-16 h-16 bg-gray-50 rounded-lg text-gray-500">
-                <span className="text-xs font-bold uppercase">Thg 12</span>
-                <span className="text-2xl font-bold">09</span>
-              </div>
-              <div className="flex-1">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="font-bold text-gray-700 text-lg">Sân Bóng Đá 1</h3>
-                    <p className="text-gray-500 text-sm flex items-center gap-2 mt-1">
-                      <Clock className="w-4 h-4" /> 15:00 - 17:15 (Slot 4)
-                    </p>
+                const formatTime = (date) => {
+                  if (!date) return "—";
+                  return date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+                };
+
+                const formatDate = (date) => {
+                  if (!date) return { month: "—", day: "—" };
+                  const months = ["Thg 1", "Thg 2", "Thg 3", "Thg 4", "Thg 5", "Thg 6", "Thg 7", "Thg 8", "Thg 9", "Thg 10", "Thg 11", "Thg 12"];
+                  return {
+                    month: months[date.getMonth()],
+                    day: date.getDate().toString()
+                  };
+                };
+
+                const dateInfo = start ? formatDate(start) : { month: "—", day: "—" };
+                const timeRange = start && endTime 
+                  ? getSlotLabelFromTimes(startTime, endTime)
+                  : start 
+                    ? formatTime(start)
+                    : "—";
+
+                return (
+                  <div 
+                    key={booking?.id} 
+                    className={`group bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:shadow-md hover:border-orange-200 transition-all flex items-center gap-5 ${
+                      status === "CANCELLED" || status === "REJECTED" ? "opacity-60" : ""
+                    }`}
+                  >
+                    <div className="flex-shrink-0 flex flex-col items-center justify-center w-16 h-16 bg-orange-50 rounded-lg text-orange-600">
+                      <span className="text-xs font-bold uppercase">{dateInfo.month}</span>
+                      <span className="text-2xl font-bold">{dateInfo.day}</span>
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="font-bold text-gray-900 text-lg group-hover:text-orange-600 transition-colors">
+                            {facilityName}
+                          </h3>
+                          <p className="text-gray-500 text-sm flex items-center gap-2 mt-1">
+                            <Clock className="w-4 h-4" /> {timeRange}
+                          </p>
+                        </div>
+                        <span className={`px-3 py-1 ${statusInfo.bg} ${statusInfo.text} text-xs rounded-full font-bold border ${statusInfo.border}`}>
+                          {statusInfo.label}
+                        </span>
+                      </div>
+                    </div>
+                    <Link to="/history" className="p-2 text-gray-300 group-hover:text-orange-600 transition-colors">
+                      <ArrowRight className="w-5 h-5" />
+                    </Link>
                   </div>
-                  <span className="px-3 py-1 bg-yellow-100 text-yellow-700 text-xs rounded-full font-bold border border-yellow-200">
-                    Chờ duyệt
-                  </span>
-                </div>
-              </div>
-            </div>
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -130,35 +332,10 @@ export default function DashboardPage() {
             Tin tức Campus
           </h2>
           <Card noPadding className="divide-y divide-gray-100 overflow-hidden">
-            <div className="p-4 hover:bg-gray-50 transition cursor-pointer">
-              <div className="flex gap-3">
-                <div className="w-2 h-2 mt-2 rounded-full bg-red-500 flex-shrink-0"></div>
-                <div>
-                  <span className="text-xs font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100">QUAN TRỌNG</span>
-                  <p className="text-sm font-semibold text-gray-900 mt-2 leading-snug">Bảo trì hệ thống điện tòa Alpha vào ngày mai.</p>
-                  <p className="text-xs text-gray-400 mt-1">2 giờ trước</p>
-                </div>
-              </div>
-            </div>
-            <div className="p-4 hover:bg-gray-50 transition cursor-pointer">
-              <div className="flex gap-3">
-                <div className="w-2 h-2 mt-2 rounded-full bg-blue-500 flex-shrink-0"></div>
-                <div>
-                  <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">SỰ KIỆN</span>
-                  <p className="text-sm font-semibold text-gray-900 mt-2 leading-snug">Mở đăng ký vé F-Camp 2025 cho K19.</p>
-                  <p className="text-xs text-gray-400 mt-1">5 giờ trước</p>
-                </div>
-              </div>
-            </div>
-             <div className="p-4 hover:bg-gray-50 transition cursor-pointer">
-              <div className="flex gap-3">
-                <div className="w-2 h-2 mt-2 rounded-full bg-gray-300 flex-shrink-0"></div>
-                <div>
-                  <span className="text-xs font-bold text-gray-600 bg-gray-100 px-2 py-0.5 rounded border border-gray-200">THÔNG BÁO</span>
-                  <p className="text-sm font-semibold text-gray-900 mt-2 leading-snug">Cập nhật quy định mượn phòng Lab.</p>
-                  <p className="text-xs text-gray-400 mt-1">1 ngày trước</p>
-                </div>
-              </div>
+            <div className="p-8 text-center text-gray-500">
+              <Bell className="w-8 h-8 mx-auto mb-2 text-gray-400" />
+              <p className="text-sm">Chưa có thông báo mới</p>
+              <p className="text-xs text-gray-400 mt-1">Thông báo từ Campus sẽ hiển thị tại đây</p>
             </div>
           </Card>
         </div>

@@ -1,7 +1,8 @@
 /* eslint-disable no-unused-vars */
 import { useEffect, useMemo, useState } from "react";
-import { X, Clock, Info } from "lucide-react";
+import { X, Clock, Info, RefreshCw, Eye } from "lucide-react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
 import Badge from "../../components/ui/Badge";
 import Card from "../../components/ui/Card";
 import Button from "../../components/ui/Button";
@@ -113,7 +114,10 @@ const formatDateTime = (value) => {
 const formatHHmm = (value) => {
   const d = toDateSafe(value);
   if (!d) return null;
-  return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+  // Đảm bảo format 24h (HH:MM) không có AM/PM
+  const hours = String(d.getHours()).padStart(2, "0");
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
 };
 
 const getSlotLabelFromTimes = (startTime, endTime) => {
@@ -121,9 +125,75 @@ const getSlotLabelFromTimes = (startTime, endTime) => {
   const e = formatHHmm(endTime);
   if (!s || !e) return "—";
 
-  const match = SLOT_DEFS.find((x) => x.start === s && x.end === e);
-  if (!match) return `${s} - ${e}`;
-  return `Slot ${match.id} (${match.start} - ${match.end})`;
+  // Tìm slot đơn lẻ trước (match chính xác start và end)
+  const singleMatch = SLOT_DEFS.find((x) => x.start === s && x.end === e);
+  if (singleMatch) {
+    return `Slot ${singleMatch.id} (${singleMatch.start} - ${singleMatch.end})`;
+  }
+
+  // Tìm slot bắt đầu từ startTime
+  const startSlot = SLOT_DEFS.find((x) => x.start === s);
+  
+  // Tìm slot kết thúc tại endTime
+  const endSlot = SLOT_DEFS.find((x) => x.end === e);
+  
+  // Nếu có cả startSlot và endSlot, và chúng liên tiếp
+  if (startSlot && endSlot && startSlot.id <= endSlot.id) {
+    const slotIds = [];
+    for (let i = startSlot.id; i <= endSlot.id; i++) {
+      slotIds.push(i);
+    }
+    if (slotIds.length > 1) {
+      return `Slot ${slotIds.join(", ")} (${s} - ${e})`;
+    } else if (slotIds.length === 1) {
+      // Trường hợp chỉ có 1 slot nhưng match cả start và end
+      return `Slot ${slotIds[0]} (${startSlot.start} - ${endSlot.end})`;
+    }
+  }
+  
+  // Nếu chỉ có startSlot (startTime match, nhưng endTime không match chính xác)
+  // Tìm slot nào chứa endTime (endTime nằm trong range của slot)
+  if (startSlot && !endSlot) {
+    // Tìm slot có startTime <= endTime < endTime của slot
+    const containingSlot = SLOT_DEFS.find((x) => {
+      const slotStart = x.start;
+      const slotEnd = x.end;
+      // So sánh thời gian dạng "HH:MM"
+      return slotStart <= e && e < slotEnd;
+    });
+    
+    if (containingSlot && containingSlot.id >= startSlot.id) {
+      // Có slot chứa endTime
+      const slotIds = [];
+      for (let i = startSlot.id; i <= containingSlot.id; i++) {
+        slotIds.push(i);
+      }
+      if (slotIds.length > 1) {
+        return `Slot ${slotIds.join(", ")} (${s} - ${containingSlot.end})`;
+      } else {
+        // Chỉ có 1 slot nhưng endTime nằm trong slot đó
+        return `Slot ${startSlot.id} (${startSlot.start} - ${startSlot.end})`;
+      }
+    }
+    
+    // Nếu không tìm thấy slot chứa endTime, tìm slot tiếp theo
+    const nextSlot = SLOT_DEFS.find((x) => x.id > startSlot.id && x.end >= e);
+    if (nextSlot) {
+      const slotIds = [];
+      for (let i = startSlot.id; i <= nextSlot.id; i++) {
+        slotIds.push(i);
+      }
+      if (slotIds.length > 1) {
+        return `Slot ${slotIds.join(", ")} (${s} - ${nextSlot.end})`;
+      }
+    }
+    
+    // Nếu không tìm thấy, hiển thị slot bắt đầu
+    return `Slot ${startSlot.id} (${startSlot.start} - ${startSlot.end})`;
+  }
+
+  // Fallback: hiển thị thời gian
+  return `${s} - ${e}`;
 };
 
 const pickFacilityName = (item) =>
@@ -176,6 +246,7 @@ const extractLogInfo = (data) => {
 };
 
 export default function MyBookings() {
+  const navigate = useNavigate();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -186,6 +257,10 @@ export default function MyBookings() {
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState("");
   const [logData, setLogData] = useState(null);
+
+  // ✅ MODAL RECURRING DETAIL
+  const [recurringDetailOpen, setRecurringDetailOpen] = useState(false);
+  const [recurringDetailData, setRecurringDetailData] = useState(null);
 
   const fetchMyBookings = async () => {
     setLoading(true);
@@ -362,6 +437,10 @@ export default function MyBookings() {
                   // status gốc (để không phá hành vi cũ: log/cancel theo API hiện tại)
                   const status = normalizeStatus(item?.status);
                   const isCancelled = status === "CANCELLED" || status === "CANCELED";
+                  
+                  // Check nếu là booking định kỳ (recurring)
+                  const isRecurring = item?.isGroup === true && Array.isArray(item?.bookings) && item.bookings.length > 1;
+                  const recurringBookingCount = isRecurring ? item.bookings.length : 0;
 
                   const dateValue =
                     item?.startTime ||
@@ -376,10 +455,39 @@ export default function MyBookings() {
                     ["REJECTED", "CANCELLED", "CANCELED", "PREEMPTED"].includes(status);
 
                   return (
-                    <tr key={item?.id ?? idx} className="hover:bg-gray-50">
-                      <td className="p-4 font-medium">{pickFacilityName(item)}</td>
-                      <td className="p-4 text-gray-600">{formatDate(dateValue)}</td>
-                      <td className="p-4 text-gray-600">{pickSlots(item)}</td>
+                    <tr key={item?.id ?? idx} className={`hover:bg-gray-50 ${isRecurring ? 'bg-blue-50/30' : ''}`}>
+                      <td className="p-4 font-medium">
+                        <div className="flex items-center gap-2">
+                          {isRecurring && (
+                            <RefreshCw className="w-4 h-4 text-blue-600" title="Đặt phòng định kỳ" />
+                          )}
+                          <span>{pickFacilityName(item)}</span>
+                        </div>
+                      </td>
+                      <td className="p-4 text-gray-600">
+                        {isRecurring ? (
+                          <div className="flex flex-col gap-1">
+                            <span>{formatDate(dateValue)}</span>
+                            <span className="text-xs text-blue-600 font-medium">
+                              {recurringBookingCount} buổi
+                            </span>
+                          </div>
+                        ) : (
+                          formatDate(dateValue)
+                        )}
+                      </td>
+                      <td className="p-4 text-gray-600">
+                        {isRecurring ? (
+                          <div className="flex flex-col gap-1">
+                            <span>{pickSlots(item)}</span>
+                            <Badge type="info" className="text-xs w-fit">
+                              Định kỳ
+                            </Badge>
+                          </div>
+                        ) : (
+                          pickSlots(item)
+                        )}
+                      </td>
 
                       <td className="p-4 text-gray-600 text-sm">
                         {timeUntil ? (
@@ -399,6 +507,23 @@ export default function MyBookings() {
 
                       <td className="p-4 text-right">
                         <div className="flex items-center justify-end gap-2">
+                          {/* Nút xem chi tiết cho booking định kỳ */}
+                          {isRecurring && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => {
+                                setRecurringDetailData(item);
+                                setRecurringDetailOpen(true);
+                              }}
+                              className="whitespace-nowrap"
+                              title="Xem chi tiết đặt phòng định kỳ"
+                            >
+                              <Eye className="w-4 h-4 mr-1" />
+                              Chi tiết
+                            </Button>
+                          )}
+
                           {showLogBtn && (
                             <Button
                               variant="secondary"
@@ -412,7 +537,10 @@ export default function MyBookings() {
                             </Button>
                           )}
 
-                          {!isCancelled && canCancel && (
+                          
+                          {/* Hiển thị nút hủy cho PENDING và APPROVED (nếu còn >= 30 phút) */}
+                          {/* Booking định kỳ không thể hủy từ đây, phải hủy từ trang định kỳ */}
+                          {!isRecurring && !isCancelled && canCancel && (
                             <Button
                               variant="danger"
                               size="sm"
@@ -431,8 +559,18 @@ export default function MyBookings() {
                             </Button>
                           )}
 
-                          {!isCancelled && !canCancel && status === "APPROVED" && (
-                            <span className="text-xs text-gray-400 italic">Không thể hủy</span>
+                          {/* Hiển thị thông báo khi không thể hủy */}
+                          {!isRecurring && !isCancelled && !canCancel && (status === "APPROVED" || status === "PENDING") && (
+                            <span className="text-xs text-gray-400 italic" title={timeUntil || "Đã qua thời gian hủy"}>
+                              {timeUntil === "Đã qua" ? "Đã qua" : "Không thể hủy"}
+                            </span>
+                          )}
+
+                          {/* Thông báo cho booking định kỳ */}
+                          {isRecurring && (
+                            <span className="text-xs text-blue-600 italic" title="Để hủy đặt phòng định kỳ, vui lòng vào trang Đặt phòng định kỳ">
+                              Xem chi tiết để hủy
+                            </span>
                           )}
                         </div>
                       </td>
@@ -451,6 +589,21 @@ export default function MyBookings() {
           error={logError}
           data={logData}
           onClose={closeLogModal}
+        />
+      )}
+
+      {recurringDetailOpen && recurringDetailData && (
+        <RecurringDetailModal 
+          data={recurringDetailData} 
+          onClose={() => {
+            setRecurringDetailOpen(false);
+            setRecurringDetailData(null);
+          }}
+          onViewFull={() => {
+            setRecurringDetailOpen(false);
+            setRecurringDetailData(null);
+            navigate("/booking/recurring");
+          }}
         />
       )}
     </div>
@@ -531,6 +684,118 @@ function BookingLogModal({ loading, error, data, onClose }) {
         <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end">
           <Button variant="secondary" onClick={onClose}>
             Đóng
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ✅ Modal chi tiết booking định kỳ
+function RecurringDetailModal({ data, onClose, onViewFull }) {
+  const bookings = Array.isArray(data?.bookings) ? data.bookings : [];
+  const status = normalizeStatus(data?.status);
+  const meta = statusMeta(data?.status);
+
+  // Group bookings theo tuần
+  const bookingsByWeek = useMemo(() => {
+    const grouped = {};
+    bookings.forEach((booking, idx) => {
+      const week = booking?.week || Math.floor(idx / 7) + 1; // Fallback: tính tuần từ index
+      if (!grouped[week]) {
+        grouped[week] = [];
+      }
+      grouped[week].push(booking);
+    });
+    return grouped;
+  }, [bookings]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-gray-900/60" onClick={onClose} />
+
+      <div className="relative bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+        <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-blue-50">
+          <div className="flex items-center gap-3">
+            <RefreshCw className="w-6 h-6 text-blue-600" />
+            <div>
+              <div className="text-lg font-bold text-gray-900">Chi tiết đặt phòng định kỳ</div>
+              <div className="text-sm text-gray-600">
+                {pickFacilityName(data)} • {bookings.length} buổi
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} className="bg-white hover:bg-gray-100 text-gray-700 p-2 rounded-full">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5 overflow-y-auto flex-1">
+          <div className="space-y-4">
+            {/* Thông tin tổng quan */}
+            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <div className="text-gray-500 mb-1">Trạng thái</div>
+                  <Badge type={meta.type}>{meta.label}</Badge>
+                </div>
+                <div>
+                  <div className="text-gray-500 mb-1">Số buổi</div>
+                  <div className="font-semibold text-gray-900">{bookings.length} buổi</div>
+                </div>
+                <div>
+                  <div className="text-gray-500 mb-1">Phòng</div>
+                  <div className="font-semibold text-gray-900">{pickFacilityName(data)}</div>
+                </div>
+                <div>
+                  <div className="text-gray-500 mb-1">Slot</div>
+                  <div className="font-semibold text-gray-900">{pickSlots(data)}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Danh sách bookings theo tuần */}
+            <div>
+              <h3 className="font-semibold text-gray-900 mb-3">Danh sách các buổi</h3>
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {Object.entries(bookingsByWeek).map(([week, weekBookings]) => (
+                  <div key={week} className="border border-gray-200 rounded-lg p-4">
+                    <div className="font-semibold text-gray-900 mb-2">Tuần {week}</div>
+                    <div className="space-y-2">
+                      {weekBookings.map((booking, idx) => {
+                        const bookingDate = booking?.startTime ? formatDate(booking.startTime) : "—";
+                        const bookingSlot = pickSlots(booking);
+                        const bookingStatus = normalizeStatus(booking?.status);
+                        const bookingMeta = statusMeta(booking?.status);
+                        
+                        return (
+                          <div key={booking?.id || idx} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                            <div className="flex-1">
+                              <div className="text-sm font-medium text-gray-900">{bookingDate}</div>
+                              <div className="text-xs text-gray-600">{bookingSlot}</div>
+                            </div>
+                            <Badge type={bookingMeta.type} className="text-xs">
+                              {bookingMeta.label}
+                            </Badge>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+          <Button variant="secondary" onClick={onClose}>
+            Đóng
+          </Button>
+          <Button onClick={onViewFull} className="bg-blue-600 hover:bg-blue-700 text-white">
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Xem trang định kỳ
           </Button>
         </div>
       </div>
