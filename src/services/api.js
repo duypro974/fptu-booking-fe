@@ -186,6 +186,24 @@ export const api = {
     }
   },
 
+  // PATCH /bookings/{id}/cancel-by-admin (Admin only)
+  cancelByAdmin: async (bookingId, reason) => {
+    try {
+      const payload = reason ? { reason } : {};
+      const data = await apiRequest(`/bookings/${bookingId}/cancel-by-admin`, {
+        method: "PATCH",
+        body:
+          Object.keys(payload).length > 0
+            ? JSON.stringify(payload)
+            : undefined,
+      });
+      return data;
+    } catch (error) {
+      console.error("[cancelByAdmin] Error:", error);
+      throw error;
+    }
+  },
+
   // ========== ADMIN APIs ==========
   // GET /bookings/pending-approvals?campusId
   getPendingApprovals: async (campus) => {

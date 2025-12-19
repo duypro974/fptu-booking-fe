@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { Check, X, Clock, Calendar, User, Building2, AlertCircle, Info, Users, Search, Plus } from "lucide-react";
+import { Check, X, Clock, Calendar, User, Building2, AlertCircle, Info, Users, Search, Plus, Eye } from "lucide-react";
 import { api } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import Button from "../../components/ui/Button";
@@ -7,7 +7,9 @@ import Card from "../../components/ui/Card";
 import Badge from "../../components/ui/Badge";
 import AdminLayout, { AdminHeader, AdminContent } from "../../components/layout/AdminLayout";
 import BookingActionModal from "./BookingActionModal";
+import BookingDetailModal from "./BookingDetailModal";
 import { toDateISO_Local } from "../../lib/utils";
+import { getAllBookings } from "../../services/bookingService";
 
 export default function ApprovalList() {
   const { user } = useAuth();
@@ -31,9 +33,32 @@ export default function ApprovalList() {
   const [isUsingFallback, setIsUsingFallback] = useState(false); // Track xem có đang dùng fallback không
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [bookingFormData, setBookingFormData] = useState(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [selectedBookingId, setSelectedBookingId] = useState(null);
+  const [selectedBookingData, setSelectedBookingData] = useState(null);
+  const [activeTab, setActiveTab] = useState('SINGLE_PENDING'); // 'SINGLE_PENDING' | 'RECURRING_PENDING' | 'RECURRING_ACTIVE'
 
   // Chỉ Facility Admin mới có quyền chuyển phòng
   const isFacilityAdmin = user?.role === 'facility_admin' || user?.role === 'FACILITY_ADMIN';
+
+  // Helper function to check if a booking is RECURRING
+  // Detection via Data Structure (NOT bookingType):
+  // - Has bookingGroupId (child slot) OR has bookings array with length > 0 (parent group)
+  const isRecurringBooking = (booking) => {
+    const hasBookingGroupId = booking.bookingGroupId !== null && booking.bookingGroupId !== undefined;
+    const hasBookingsArray = Array.isArray(booking.bookings) && booking.bookings.length > 0;
+    
+    return hasBookingGroupId || hasBookingsArray;
+  };
+  
+  // Helper function to resolve Parent ID for modal
+  // If item has bookingGroupId -> use bookingGroupId (parent), else use item.id
+  const resolveParentId = (item) => {
+    if (item.bookingGroupId !== null && item.bookingGroupId !== undefined) {
+      return item.bookingGroupId;
+    }
+    return item.id;
+  };
 
   useEffect(() => {
     console.log("[ApprovalList] useEffect triggered, user:", user);
@@ -70,23 +95,181 @@ export default function ApprovalList() {
     try {
       // Convert user.campus hoặc user.campusId sang campus
       let campus = user?.campus;
+      let campusId = user?.campusId;
       
-      if (!campus && user?.campusId) {
+      if (!campus && campusId) {
         // Map campusId sang campus string
         const campusMap = { 1: 'hn', 2: 'hcm', 3: 'dn', 4: 'ct', 5: 'qn' };
-        campus = campusMap[user.campusId] || 'hcm';
+        campus = campusMap[campusId] || 'hcm';
       }
       
       // Fallback: nếu không có campus, dùng 'hcm' làm mặc định
       if (!campus) {
         console.warn("[ApprovalList.loadRequests] Không thể xác định campus, dùng mặc định 'hcm'");
         campus = 'hcm';
+        campusId = 2; // Default to HCM
+      }
+
+      if (!campusId) {
+        const campusIdMap = { 'hn': 1, 'hcm': 2, 'dn': 3, 'ct': 4, 'qn': 5 };
+        campusId = campusIdMap[campus] || 2;
       }
 
       console.log("[ApprovalList.loadRequests] Loading approvals for campus:", campus);
-      const data = await api.getPendingApprovals(campus);
-      console.log("[ApprovalList.loadRequests] Received raw data:", data);
-      console.log("[ApprovalList.loadRequests] Received data:", data?.length || 0, "requests");
+      
+      // Load PENDING bookings
+      const pendingData = await api.getPendingApprovals(campus);
+      console.log("[ApprovalList.loadRequests] Received pending data:", pendingData?.length || 0, "requests");
+      
+      // Load ALL bookings to get APPROVED recurring bookings for RECURRING_ACTIVE tab
+      let allBookingsData = [];
+      try {
+        allBookingsData = await getAllBookings(campusId);
+        console.log("[ApprovalList.loadRequests] Received all bookings:", allBookingsData?.length || 0, "bookings");
+      } catch (error) {
+        console.warn("[ApprovalList.loadRequests] Error loading all bookings (may not be available):", error);
+        // Continue with only pending data if getAllBookings fails
+      }
+      
+      // Debug: Check sample of approved items from getAllBookings
+      const approvedItems = (allBookingsData || []).filter(item => {
+        const status = String(item.status || "").toUpperCase();
+        return status === "APPROVED" || status === "APPROVED_GROUP";
+      });
+      console.log("[ApprovalList] Total APPROVED items from getAllBookings:", approvedItems.length);
+      
+      // Check if item id 23 (known recurring) is in approved items
+      const item23 = approvedItems.find(item => item.id === 23);
+      if (item23) {
+        console.log("[ApprovalList] Item 23 (known recurring) in APPROVED:", {
+          id: item23.id,
+          status: item23.status,
+          isGroup: item23.isGroup,
+          isRecurring: item23.isRecurring,
+          bookingType: item23.bookingType,
+          bookingGroupId: item23.bookingGroupId,
+          hasBookingsArray: Array.isArray(item23.bookings) && item23.bookings.length > 0,
+          bookingsLength: item23.bookings?.length || 0,
+          fullItem: item23
+        });
+      }
+      
+      // Check for items with bookingGroupId (child bookings that might be part of recurring)
+      const itemsWithGroupId = approvedItems.filter(item => item.bookingGroupId !== null && item.bookingGroupId !== undefined);
+      console.log("[ApprovalList] APPROVED items with bookingGroupId:", itemsWithGroupId.length);
+      if (itemsWithGroupId.length > 0) {
+        // Group by bookingGroupId to find parent recurring bookings
+        const groupIds = [...new Set(itemsWithGroupId.map(item => item.bookingGroupId))];
+        console.log("[ApprovalList] Unique bookingGroupIds in APPROVED:", groupIds);
+        
+        // For each group, check if there's a parent booking
+        groupIds.forEach(groupId => {
+          const parentBooking = allBookingsData.find(item => item.id === groupId);
+          if (parentBooking) {
+            console.log("[ApprovalList] Parent booking for groupId", groupId, ":", {
+              id: parentBooking.id,
+              status: parentBooking.status,
+              isGroup: parentBooking.isGroup,
+              isRecurring: parentBooking.isRecurring,
+              bookingType: parentBooking.bookingType,
+              hasBookingsArray: Array.isArray(parentBooking.bookings) && parentBooking.bookings.length > 0,
+              bookingsLength: parentBooking.bookings?.length || 0
+            });
+          }
+        });
+      }
+      
+      if (approvedItems.length > 0) {
+        console.log("[ApprovalList] Sample APPROVED item:", {
+          id: approvedItems[0].id,
+          status: approvedItems[0].status,
+          isGroup: approvedItems[0].isGroup,
+          isRecurring: approvedItems[0].isRecurring,
+          bookingType: approvedItems[0].bookingType,
+          bookingGroupId: approvedItems[0].bookingGroupId,
+          hasBookingsArray: Array.isArray(approvedItems[0].bookings) && approvedItems[0].bookings.length > 0,
+          bookingsLength: approvedItems[0].bookings?.length || 0
+        });
+      }
+      
+      // Merge: Use pending data as primary, add APPROVED recurring bookings from allBookings
+      // Filter APPROVED items that are part of recurring (child slots with bookingGroupId)
+      const approvedRecurring = (allBookingsData || []).filter(item => {
+        const status = String(item.status || "").toUpperCase();
+        const isApproved = status === "APPROVED";
+        
+        if (!isApproved) return false;
+        
+        // For RECURRING_ACTIVE: Only include child slots (have bookingGroupId)
+        // We will group them by bookingGroupId to show one card per parent
+        const hasBookingGroupId = item.bookingGroupId !== null && item.bookingGroupId !== undefined;
+        
+        return hasBookingGroupId;
+      });
+      
+      console.log("[ApprovalList] Filtered approved recurring child slots:", approvedRecurring.length);
+      
+      // Group child slots by bookingGroupId to create parent groups
+      const groupedByParent = {};
+      approvedRecurring.forEach(item => {
+        const groupId = item.bookingGroupId;
+        if (!groupId) return;
+        
+        if (!groupedByParent[groupId]) {
+          groupedByParent[groupId] = [];
+        }
+        groupedByParent[groupId].push(item);
+      });
+      
+      console.log("[ApprovalList] Grouped into", Object.keys(groupedByParent).length, "parent groups");
+      
+      // Aggregate each group into a single parent booking object
+      const aggregatedParents = Object.entries(groupedByParent).map(([groupId, childSlots]) => {
+        // Use the first child slot as base
+        const firstSlot = childSlots[0];
+        
+        // Calculate date range: min(startTime) to max(endTime)
+        const startTimes = childSlots.map(slot => slot.startTime ? new Date(slot.startTime).getTime() : 0).filter(t => t > 0);
+        const endTimes = childSlots.map(slot => slot.endTime ? new Date(slot.endTime).getTime() : 0).filter(t => t > 0);
+        const minStartTime = startTimes.length > 0 ? new Date(Math.min(...startTimes)).toISOString() : null;
+        const maxEndTime = endTimes.length > 0 ? new Date(Math.max(...endTimes)).toISOString() : null;
+        
+        // Calculate progress: Used slots (endTime < now)
+        const now = new Date().getTime();
+        const usedSlots = childSlots.filter(slot => {
+          if (!slot.endTime) return false;
+          return new Date(slot.endTime).getTime() < now;
+        }).length;
+        const totalSlots = childSlots.length;
+        
+        // Create aggregated parent object
+        return {
+          ...firstSlot,
+          id: parseInt(groupId), // Use parent ID as the ID for the card
+          bookingGroupId: parseInt(groupId),
+          // Store aggregated data
+          _aggregated: {
+            childSlots: childSlots,
+            minStartTime,
+            maxEndTime,
+            usedSlots,
+            totalSlots
+          },
+          // Override startTime/endTime for display
+          startTime: minStartTime,
+          endTime: maxEndTime
+        };
+      });
+      
+      console.log("[ApprovalList] Aggregated parents:", aggregatedParents.length);
+      
+      // Combine: pending data + aggregated parent groups (avoid duplicates by ID)
+      const pendingIds = new Set((pendingData || []).map(item => item.id));
+      const uniqueApproved = aggregatedParents.filter(item => !pendingIds.has(item.id));
+      
+      const data = [...(pendingData || []), ...uniqueApproved];
+      
+      console.log("[ApprovalList.loadRequests] Combined data:", data.length, "requests (pending:", pendingData?.length || 0, "approved recurring:", uniqueApproved.length, ")");
       
       // Map data với flexible field mapping
       const mappedData = (data || []).map((item) => {
@@ -195,7 +378,15 @@ export default function ApprovalList() {
           startTime,
           endTime,
           participantCount,
-          roomType
+          roomType,
+          // Preserve fields for RECURRING detection
+          isGroup: item.isGroup,
+          isRecurring: item.isRecurring,
+          bookingType: item.bookingType,
+          bookings: item.bookings,
+          bookingGroupId: item.bookingGroupId,
+          // Preserve aggregated data for RECURRING_ACTIVE tab
+          _aggregated: item._aggregated
         };
       });
       
@@ -736,9 +927,82 @@ export default function ApprovalList() {
     return facilityTypes.map(type => type.name).sort();
   }, [facilityTypes]);
 
-  // Filter requests theo search term và type filter
+  // Separate requests into 3 categories based on type and status
+  const { singlePendingRequests, recurringPendingRequests, recurringActiveRequests } = useMemo(() => {
+    const singlePending = [];
+    const recurringPending = [];
+    const recurringActive = [];
+    
+    console.log("[ApprovalList] Separating requests. Total:", requests.length);
+    
+    // Count items with isGroup
+    const itemsWithIsGroup = requests.filter(r => r.isGroup === true);
+    console.log("[ApprovalList] Items with isGroup=true:", itemsWithIsGroup.length);
+    if (itemsWithIsGroup.length > 0) {
+      console.log("[ApprovalList] First isGroup item:", itemsWithIsGroup[0]);
+    }
+    
+    requests.forEach((req, index) => {
+      const status = String(req.status || "").toUpperCase();
+      const isRecurring = isRecurringBooking(req);
+      
+      // Debug logging for items with isGroup or first few items
+      if (req.isGroup === true || index < 3) {
+        console.log(`[ApprovalList] Request ${index}:`, {
+          id: req.id,
+          status,
+          isRecurring,
+          bookingType: req.bookingType,
+          bookingTypeName: req.bookingType?.name,
+          isGroup: req.isGroup,
+          isRecurringFlag: req.isRecurring,
+          hasBookingsArray: Array.isArray(req.bookings) && req.bookings.length > 0,
+          bookingsLength: req.bookings?.length || 0
+        });
+      }
+      
+      if (isRecurring) {
+        // Check for PENDING or PENDING_GROUP status
+        if (status === "PENDING" || status === "PENDING_GROUP") {
+          recurringPending.push(req);
+        } else if (status === "APPROVED") {
+          // For RECURRING_ACTIVE tab: only APPROVED (not APPROVED_GROUP)
+          recurringActive.push(req);
+        }
+      } else {
+        // Single bookings with PENDING status (not PENDING_GROUP)
+        if (status === "PENDING") {
+          singlePending.push(req);
+        }
+      }
+    });
+    
+    console.log("[ApprovalList] Separated counts:", {
+      singlePending: singlePending.length,
+      recurringPending: recurringPending.length,
+      recurringActive: recurringActive.length
+    });
+    
+    return { 
+      singlePendingRequests: singlePending, 
+      recurringPendingRequests: recurringPending,
+      recurringActiveRequests: recurringActive
+    };
+  }, [requests]);
+
+  // Filter requests theo activeTab, search term và type filter
   const filteredRequests = useMemo(() => {
-    return requests.filter((req) => {
+    let baseRequests = [];
+    
+    if (activeTab === 'SINGLE_PENDING') {
+      baseRequests = singlePendingRequests;
+    } else if (activeTab === 'RECURRING_PENDING') {
+      baseRequests = recurringPendingRequests;
+    } else if (activeTab === 'RECURRING_ACTIVE') {
+      baseRequests = recurringActiveRequests;
+    }
+    
+    return baseRequests.filter((req) => {
       // Filter theo search term (tìm trong tên phòng, tên người đặt, email)
       const matchesSearch = !searchTerm || 
         req.roomName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -750,7 +1014,12 @@ export default function ApprovalList() {
       
       return matchesSearch && matchesType;
     });
-  }, [requests, searchTerm, typeFilter]);
+  }, [activeTab, singlePendingRequests, recurringPendingRequests, recurringActiveRequests, searchTerm, typeFilter]);
+
+  // Count for each tab
+  const singlePendingCount = singlePendingRequests.length;
+  const recurringPendingCount = recurringPendingRequests.length;
+  const recurringActiveCount = recurringActiveRequests.length;
 
   return (
     <AdminLayout>
@@ -762,13 +1031,94 @@ export default function ApprovalList() {
             <p className="text-gray-500">Xem và xử lý các yêu cầu đặt phòng đang chờ duyệt tại {user?.campusName}.</p>
           </div>
           <Badge type="warning" className="text-base px-4 py-2">
-            {loading ? 0 : (searchTerm || typeFilter !== "all" ? filteredRequests.length : requests.length)} đơn chờ duyệt
+            {loading ? 0 : (() => {
+              if (searchTerm || typeFilter !== "all") {
+                return filteredRequests.length;
+              }
+              if (activeTab === 'SINGLE_PENDING') return singlePendingCount;
+              if (activeTab === 'RECURRING_PENDING') return recurringPendingCount;
+              if (activeTab === 'RECURRING_ACTIVE') return recurringActiveCount;
+              return 0;
+            })()} {activeTab === 'RECURRING_ACTIVE' ? 'lịch đang chạy' : 'đơn chờ duyệt'}
           </Badge>
         </div>
       </AdminHeader>
 
       {/* Content - Scrollable */}
       <AdminContent>
+        {/* Tab Navigation */}
+        {!loading && (
+          <Card className="mb-4">
+            <div className="border-b border-gray-200">
+              <div className="flex gap-1">
+                <button
+                  onClick={() => {
+                    setActiveTab('SINGLE_PENDING');
+                    setSearchTerm(""); // Clear search when switching tabs
+                  }}
+                  className={`px-6 py-3 font-medium text-sm border-b-2 transition-colors relative ${
+                    activeTab === 'SINGLE_PENDING'
+                      ? 'border-orange-500 text-orange-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Booking Lẻ
+                  {singlePendingCount > 0 && (
+                    <Badge 
+                      type={activeTab === 'SINGLE_PENDING' ? "warning" : "secondary"} 
+                      className="ml-2 text-xs"
+                    >
+                      {singlePendingCount}
+                    </Badge>
+                  )}
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveTab('RECURRING_PENDING');
+                    setSearchTerm(""); // Clear search when switching tabs
+                  }}
+                  className={`px-6 py-3 font-medium text-sm border-b-2 transition-colors relative ${
+                    activeTab === 'RECURRING_PENDING'
+                      ? 'border-orange-500 text-orange-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Định kỳ - Chờ duyệt
+                  {recurringPendingCount > 0 && (
+                    <Badge 
+                      type={activeTab === 'RECURRING_PENDING' ? "warning" : "secondary"} 
+                      className="ml-2 text-xs"
+                    >
+                      {recurringPendingCount}
+                    </Badge>
+                  )}
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveTab('RECURRING_ACTIVE');
+                    setSearchTerm(""); // Clear search when switching tabs
+                  }}
+                  className={`px-6 py-3 font-medium text-sm border-b-2 transition-colors relative ${
+                    activeTab === 'RECURRING_ACTIVE'
+                      ? 'border-orange-500 text-orange-600 font-bold'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Check lịch định kỳ
+                  {recurringActiveCount > 0 && (
+                    <Badge 
+                      type={activeTab === 'RECURRING_ACTIVE' ? "success" : "secondary"} 
+                      className="ml-2 text-xs"
+                    >
+                      {recurringActiveCount}
+                    </Badge>
+                  )}
+                </button>
+              </div>
+            </div>
+          </Card>
+        )}
+
         {/* Toolbar với Search và Filter */}
         {!loading && requests.length > 0 && (
           <Card className="mb-4 p-4">
@@ -821,15 +1171,33 @@ export default function ApprovalList() {
           <Card className="text-center py-12">
             <Clock className="w-12 h-12 mx-auto mb-4 text-gray-300" />
             <p className="text-gray-500 text-lg">
-              {requests.length === 0 
-                ? "Hiện không có yêu cầu nào cần xử lý."
-                : "Không tìm thấy yêu cầu nào phù hợp với bộ lọc."}
+              {activeTab === 'SINGLE_PENDING'
+                ? (singlePendingCount === 0 
+                    ? "Hiện không có đơn lẻ nào đang chờ duyệt."
+                    : "Không tìm thấy đơn lẻ nào phù hợp với bộ lọc.")
+                : activeTab === 'RECURRING_PENDING'
+                ? (recurringPendingCount === 0
+                    ? "Hiện không có đơn định kỳ nào đang chờ duyệt."
+                    : "Không tìm thấy đơn định kỳ nào phù hợp với bộ lọc.")
+                : (recurringActiveCount === 0
+                    ? "Không có lịch định kỳ nào đang chạy."
+                    : "Không tìm thấy lịch định kỳ nào phù hợp với bộ lọc.")}
             </p>
           </Card>
         ) : (
           <div className="space-y-4">
             {filteredRequests.map((req, index) => (
-              <Card key={req.id} className={`p-6 hover:shadow-md transition-shadow ${index === 0 ? 'border-2 border-green-200 bg-green-50/30' : ''}`}>
+              <Card 
+                key={req.id} 
+                className={`p-6 hover:shadow-md transition-shadow cursor-pointer ${index === 0 ? 'border-2 border-green-200 bg-green-50/30' : ''}`}
+                onClick={() => {
+                  // For RECURRING_ACTIVE tab: resolve parent ID
+                  const parentId = activeTab === 'RECURRING_ACTIVE' ? resolveParentId(req) : req.id;
+                  setSelectedBookingId(parentId);
+                  setSelectedBookingData(req); // Pass full booking data
+                  setShowDetailModal(true);
+                }}
+              >
                 <div className="flex flex-col lg:flex-row gap-6">
                   {/* Thông tin chính */}
                   <div className="flex-1 space-y-4">
@@ -888,6 +1256,45 @@ export default function ApprovalList() {
                       </div>
                     </div>
 
+                    {/* Progress display for RECURRING_ACTIVE tab (aggregated parent groups) */}
+                    {activeTab === 'RECURRING_ACTIVE' && req._aggregated && (
+                      <div className="pt-4 border-t border-gray-100">
+                        <div className="space-y-2">
+                          {/* Date Range */}
+                          <div>
+                            <div className="text-sm text-gray-500 mb-1">Thời gian</div>
+                            {req._aggregated.minStartTime && req._aggregated.maxEndTime ? (
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-gray-900">
+                                  {new Date(req._aggregated.minStartTime).toLocaleDateString("vi-VN", { 
+                                    day: "2-digit", 
+                                    month: "2-digit", 
+                                    year: "numeric" 
+                                  })} → {new Date(req._aggregated.maxEndTime).toLocaleDateString("vi-VN", { 
+                                    day: "2-digit", 
+                                    month: "2-digit", 
+                                    year: "numeric" 
+                                  })}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-gray-500">N/A</span>
+                            )}
+                          </div>
+                          {/* Progress */}
+                          <div>
+                            <div className="text-sm text-gray-500 mb-1">Tiến độ</div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-gray-900">
+                                {req._aggregated.usedSlots}/{req._aggregated.totalSlots} buổi
+                              </span>
+                              <Badge type="success" className="text-xs">Đang hoạt động</Badge>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Lý do đặt phòng */}
                     {req.reason && (
                       <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
@@ -921,26 +1328,89 @@ export default function ApprovalList() {
                   </div>
 
                   {/* Actions */}
-                  <div className="flex flex-col gap-3 lg:w-48">
-                    <Button
-                      variant="primary"
-                      className="w-full bg-green-600 hover:bg-green-700"
-                      onClick={() => handleApprove(req)}
-                    >
-                      <Check className="w-4 h-4" />
-                      Duyệt đơn
-                    </Button>
-                    <Button
-                      variant="danger"
-                      className="w-full bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
-                      onClick={() => handleReject(req)}
-                    >
-                      <X className="w-4 h-4" />
-                      Từ chối
-                    </Button>
-                    <div className="text-xs text-gray-500 text-center pt-2">
-                      Đơn #{req.bookingCode || req.id}
-                    </div>
+                  <div 
+                    className="flex flex-col gap-3 lg:w-48"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {activeTab === 'RECURRING_ACTIVE' ? (
+                      // Tab 3: Only show "Xem lộ trình" button
+                      <>
+                        <Button
+                          variant="primary"
+                          className="w-full"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // For aggregated parent groups, use bookingGroupId (which is the parent ID)
+                            const parentId = req.bookingGroupId || req.id;
+                            console.log("[ApprovalList] Opening detail modal for RECURRING_ACTIVE:", {
+                              itemId: req.id,
+                              bookingGroupId: req.bookingGroupId,
+                              resolvedParentId: parentId,
+                              aggregated: !!req._aggregated
+                            });
+                            setSelectedBookingId(parentId);
+                            setSelectedBookingData(req);
+                            setShowDetailModal(true);
+                          }}
+                        >
+                          <Eye className="w-4 h-4 mr-2" />
+                          Xem chi tiết
+                        </Button>
+                        <div className="text-xs text-gray-500 text-center pt-2">
+                          Đơn #{req.bookingCode || req.id}
+                        </div>
+                      </>
+                    ) : (
+                      // Tab 1 & 2: Show all actions
+                      <>
+                        <Button
+                          variant="secondary"
+                          className="w-full"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedBookingId(req.id);
+                            setSelectedBookingData(req); // Pass full booking data
+                            setShowDetailModal(true);
+                          }}
+                        >
+                          <Eye className="w-4 h-4 mr-2" />
+                          Xem chi tiết
+                        </Button>
+                        <Button
+                          variant="primary"
+                          className="w-full bg-green-600 hover:bg-green-700"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // Tab SINGLE_PENDING: Always approve directly
+                            // Tab RECURRING_PENDING: Open modal to approve child slots
+                            if (activeTab === 'RECURRING_PENDING') {
+                              setSelectedBookingId(req.id);
+                              setSelectedBookingData(req); // Pass full booking data
+                              setShowDetailModal(true);
+                            } else {
+                              handleApprove(req);
+                            }
+                          }}
+                        >
+                          <Check className="w-4 h-4" />
+                          Duyệt đơn
+                        </Button>
+                        <Button
+                          variant="danger"
+                          className="w-full bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleReject(req);
+                          }}
+                        >
+                          <X className="w-4 h-4" />
+                          Từ chối
+                        </Button>
+                        <div className="text-xs text-gray-500 text-center pt-2">
+                          Đơn #{req.bookingCode || req.id}
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               </Card>
@@ -1246,6 +1716,27 @@ export default function ApprovalList() {
           setBookingFormData(null);
         }}
         bookingData={bookingFormData}
+      />
+
+      {/* Booking Detail Modal */}
+      <BookingDetailModal
+        isOpen={showDetailModal}
+        onClose={() => {
+          setShowDetailModal(false);
+          setSelectedBookingId(null);
+          setSelectedBookingData(null);
+        }}
+        bookingId={selectedBookingId}
+        initialBookingData={selectedBookingData}
+        defaultTab={activeTab === 'RECURRING_ACTIVE' ? 'tracking' : (activeTab === 'RECURRING_PENDING' ? 'approval' : null)}
+        onSuccess={async () => {
+          // Reload danh sách yêu cầu sau khi có action
+          try {
+            await loadRequests();
+          } catch (error) {
+            console.error("[ApprovalList] Error reloading requests after detail action:", error);
+          }
+        }}
       />
     </AdminLayout>
   );
