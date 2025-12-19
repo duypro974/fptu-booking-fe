@@ -39,15 +39,19 @@ const statusMeta = (status) => {
 ========================================================= */
 const summarizeGroupStatus = (item) => {
   // booking thường: dùng như cũ
-  if (!item?.isGroup || !Array.isArray(item?.bookings) || item.bookings.length === 0) {
+  if (!item?.isGroup || !Array.isArray(item?.bookings)) {
     const st = normalizeStatus(item?.status);
     const meta = statusMeta(st);
-    // Giữ label kiểu tiếng Việt chuẩn, không dùng "Thành công"
     return { st, type: meta.type, label: statusToVi(st) };
   }
 
   const sts = item.bookings.map((b) => normalizeStatus(b?.status));
   const total = sts.length;
+
+  // ✅ FIX: tránh trường hợp 0/0
+  if (total === 0) {
+    return { st: "PENDING", type: "warning", label: "Chờ duyệt" };
+  }
 
   const count = (x) => sts.filter((s) => s === x).length;
   const approved = count("APPROVED");
@@ -133,10 +137,10 @@ const getSlotLabelFromTimes = (startTime, endTime) => {
 
   // Tìm slot bắt đầu từ startTime
   const startSlot = SLOT_DEFS.find((x) => x.start === s);
-  
+
   // Tìm slot kết thúc tại endTime
   const endSlot = SLOT_DEFS.find((x) => x.end === e);
-  
+
   // Nếu có cả startSlot và endSlot, và chúng liên tiếp
   if (startSlot && endSlot && startSlot.id <= endSlot.id) {
     const slotIds = [];
@@ -146,24 +150,19 @@ const getSlotLabelFromTimes = (startTime, endTime) => {
     if (slotIds.length > 1) {
       return `Slot ${slotIds.join(", ")} (${s} - ${e})`;
     } else if (slotIds.length === 1) {
-      // Trường hợp chỉ có 1 slot nhưng match cả start và end
       return `Slot ${slotIds[0]} (${startSlot.start} - ${endSlot.end})`;
     }
   }
-  
+
   // Nếu chỉ có startSlot (startTime match, nhưng endTime không match chính xác)
-  // Tìm slot nào chứa endTime (endTime nằm trong range của slot)
   if (startSlot && !endSlot) {
-    // Tìm slot có startTime <= endTime < endTime của slot
     const containingSlot = SLOT_DEFS.find((x) => {
       const slotStart = x.start;
       const slotEnd = x.end;
-      // So sánh thời gian dạng "HH:MM"
       return slotStart <= e && e < slotEnd;
     });
-    
+
     if (containingSlot && containingSlot.id >= startSlot.id) {
-      // Có slot chứa endTime
       const slotIds = [];
       for (let i = startSlot.id; i <= containingSlot.id; i++) {
         slotIds.push(i);
@@ -171,12 +170,10 @@ const getSlotLabelFromTimes = (startTime, endTime) => {
       if (slotIds.length > 1) {
         return `Slot ${slotIds.join(", ")} (${s} - ${containingSlot.end})`;
       } else {
-        // Chỉ có 1 slot nhưng endTime nằm trong slot đó
         return `Slot ${startSlot.id} (${startSlot.start} - ${startSlot.end})`;
       }
     }
-    
-    // Nếu không tìm thấy slot chứa endTime, tìm slot tiếp theo
+
     const nextSlot = SLOT_DEFS.find((x) => x.id > startSlot.id && x.end >= e);
     if (nextSlot) {
       const slotIds = [];
@@ -187,8 +184,7 @@ const getSlotLabelFromTimes = (startTime, endTime) => {
         return `Slot ${slotIds.join(", ")} (${s} - ${nextSlot.end})`;
       }
     }
-    
-    // Nếu không tìm thấy, hiển thị slot bắt đầu
+
     return `Slot ${startSlot.id} (${startSlot.start} - ${startSlot.end})`;
   }
 
@@ -252,7 +248,7 @@ export default function MyBookings() {
   const [error, setError] = useState("");
   const [cancellingId, setCancellingId] = useState(null);
 
-  // ✅ MODAL LOG
+  // ✅ MODAL LOG (booking đơn hoặc booking con trong group)
   const [logOpen, setLogOpen] = useState(false);
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState("");
@@ -349,9 +345,10 @@ export default function MyBookings() {
     }
   };
 
-  // ✅ Chỉ mở log khi status là REJECTED/CANCELLED/PREEMPTED (không show cho PENDING/APPROVED)
-  const openLogModal = async (booking) => {
-    const st = normalizeStatus(booking?.status);
+  // ✅ Chỉ mở log khi status là REJECTED/CANCELLED/PREEMPTED
+  // (dùng cho booking đơn, hoặc booking con trong group)
+  const openLogModal = async (bookingLike) => {
+    const st = normalizeStatus(bookingLike?.status);
     const allowed = ["REJECTED", "CANCELLED", "CANCELED", "PREEMPTED"];
     if (!allowed.includes(st)) return;
 
@@ -361,7 +358,7 @@ export default function MyBookings() {
     setLogData(null);
 
     try {
-      const data = await getBookingDetail(booking.id);
+      const data = await getBookingDetail(bookingLike.id);
       setLogData(data);
     } catch (e) {
       setLogError(e?.response?.data?.message || e?.message || "Không thể tải log booking.");
@@ -383,20 +380,13 @@ export default function MyBookings() {
       <div className="flex items-end justify-between gap-3">
         <h1 className="text-2xl font-bold text-gray-800">Lịch sử đặt phòng</h1>
 
-        <Button
-          variant="secondary"
-          onClick={fetchMyBookings}
-          disabled={loading}
-          className="whitespace-nowrap"
-        >
+        <Button variant="secondary" onClick={fetchMyBookings} disabled={loading} className="whitespace-nowrap">
           {loading ? "Đang tải..." : "Tải lại"}
         </Button>
       </div>
 
       {error && (
-        <div className="p-4 rounded-xl bg-red-50 border border-red-100 text-sm text-red-700">
-          {error}
-        </div>
+        <div className="p-4 rounded-xl bg-red-50 border border-red-100 text-sm text-red-700">{error}</div>
       )}
 
       <Card className="overflow-hidden">
@@ -437,9 +427,10 @@ export default function MyBookings() {
                   // status gốc (để không phá hành vi cũ: log/cancel theo API hiện tại)
                   const status = normalizeStatus(item?.status);
                   const isCancelled = status === "CANCELLED" || status === "CANCELED";
-                  
-                  // Check nếu là booking định kỳ (recurring)
-                  const isRecurring = item?.isGroup === true && Array.isArray(item?.bookings) && item.bookings.length > 1;
+
+                  // booking định kỳ
+                  const isRecurring =
+                    item?.isGroup === true && Array.isArray(item?.bookings) && item.bookings.length > 1;
                   const recurringBookingCount = isRecurring ? item.bookings.length : 0;
 
                   const dateValue =
@@ -449,13 +440,16 @@ export default function MyBookings() {
                     item?.bookingDate ||
                     item?.createdAt;
 
-                  // ✅ Nếu là group: hiện tại không mở log theo item.id (vì log đang theo booking đơn)
+                  // Booking đơn mới có log theo dòng này (vì log là theo bookingId)
                   const showLogBtn =
                     !item?.isGroup &&
                     ["REJECTED", "CANCELLED", "CANCELED", "PREEMPTED"].includes(status);
 
                   return (
-                    <tr key={item?.id ?? idx} className={`hover:bg-gray-50 ${isRecurring ? 'bg-blue-50/30' : ''}`}>
+                    <tr
+                      key={item?.id ?? idx}
+                      className={`hover:bg-gray-50 ${isRecurring ? "bg-blue-50/30" : ""}`}
+                    >
                       <td className="p-4 font-medium">
                         <div className="flex items-center gap-2">
                           {isRecurring && (
@@ -464,18 +458,18 @@ export default function MyBookings() {
                           <span>{pickFacilityName(item)}</span>
                         </div>
                       </td>
+
                       <td className="p-4 text-gray-600">
                         {isRecurring ? (
                           <div className="flex flex-col gap-1">
                             <span>{formatDate(dateValue)}</span>
-                            <span className="text-xs text-blue-600 font-medium">
-                              {recurringBookingCount} buổi
-                            </span>
+                            <span className="text-xs text-blue-600 font-medium">{recurringBookingCount} buổi</span>
                           </div>
                         ) : (
                           formatDate(dateValue)
                         )}
                       </td>
+
                       <td className="p-4 text-gray-600">
                         {isRecurring ? (
                           <div className="flex flex-col gap-1">
@@ -537,9 +531,7 @@ export default function MyBookings() {
                             </Button>
                           )}
 
-                          
-                          {/* Hiển thị nút hủy cho PENDING và APPROVED (nếu còn >= 30 phút) */}
-                          {/* Booking định kỳ không thể hủy từ đây, phải hủy từ trang định kỳ */}
+                          {/* Booking định kỳ không hủy tại đây */}
                           {!isRecurring && !isCancelled && canCancel && (
                             <Button
                               variant="danger"
@@ -559,16 +551,23 @@ export default function MyBookings() {
                             </Button>
                           )}
 
-                          {/* Hiển thị thông báo khi không thể hủy */}
-                          {!isRecurring && !isCancelled && !canCancel && (status === "APPROVED" || status === "PENDING") && (
-                            <span className="text-xs text-gray-400 italic" title={timeUntil || "Đã qua thời gian hủy"}>
-                              {timeUntil === "Đã qua" ? "Đã qua" : "Không thể hủy"}
-                            </span>
-                          )}
+                          {!isRecurring &&
+                            !isCancelled &&
+                            !canCancel &&
+                            (status === "APPROVED" || status === "PENDING") && (
+                              <span
+                                className="text-xs text-gray-400 italic"
+                                title={timeUntil || "Đã qua thời gian hủy"}
+                              >
+                                {timeUntil === "Đã qua" ? "Đã qua" : "Không thể hủy"}
+                              </span>
+                            )}
 
-                          {/* Thông báo cho booking định kỳ */}
                           {isRecurring && (
-                            <span className="text-xs text-blue-600 italic" title="Để hủy đặt phòng định kỳ, vui lòng vào trang Đặt phòng định kỳ">
+                            <span
+                              className="text-xs text-blue-600 italic"
+                              title="Để hủy đặt phòng định kỳ, vui lòng vào trang Đặt phòng định kỳ"
+                            >
                               Xem chi tiết để hủy
                             </span>
                           )}
@@ -583,18 +582,11 @@ export default function MyBookings() {
         </div>
       </Card>
 
-      {logOpen && (
-        <BookingLogModal
-          loading={logLoading}
-          error={logError}
-          data={logData}
-          onClose={closeLogModal}
-        />
-      )}
+      {logOpen && <BookingLogModal loading={logLoading} error={logError} data={logData} onClose={closeLogModal} />}
 
       {recurringDetailOpen && recurringDetailData && (
-        <RecurringDetailModal 
-          data={recurringDetailData} 
+        <RecurringDetailModal
+          data={recurringDetailData}
           onClose={() => {
             setRecurringDetailOpen(false);
             setRecurringDetailData(null);
@@ -604,6 +596,8 @@ export default function MyBookings() {
             setRecurringDetailData(null);
             navigate("/booking/recurring");
           }}
+          // ✅ NEW: pass handler để xem log từng buổi
+          onOpenLog={(bookingChild) => openLogModal(bookingChild)}
         />
       )}
     </div>
@@ -638,9 +632,7 @@ function BookingLogModal({ loading, error, data, onClose }) {
           {loading ? (
             <div className="text-sm text-gray-500">Đang tải...</div>
           ) : error ? (
-            <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
-              {error}
-            </div>
+            <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">{error}</div>
           ) : !data ? (
             <div className="text-sm text-gray-500">Không có dữ liệu.</div>
           ) : !canShow ? (
@@ -652,9 +644,7 @@ function BookingLogModal({ loading, error, data, onClose }) {
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
                   <div className="text-gray-500">Phòng</div>
-                  <div className="font-semibold text-gray-900">
-                    {data?.facility?.name ?? "—"}
-                  </div>
+                  <div className="font-semibold text-gray-900">{data?.facility?.name ?? "—"}</div>
                 </div>
                 <div>
                   <div className="text-gray-500">Thời gian</div>
@@ -693,10 +683,11 @@ function BookingLogModal({ loading, error, data, onClose }) {
 }
 
 // ✅ Modal chi tiết booking định kỳ
-function RecurringDetailModal({ data, onClose, onViewFull }) {
+function RecurringDetailModal({ data, onClose, onViewFull, onOpenLog }) {
   const bookings = Array.isArray(data?.bookings) ? data.bookings : [];
-  const status = normalizeStatus(data?.status);
-  const meta = statusMeta(data?.status);
+
+  // ✅ FIX: badge tổng quan phải dùng summarizeGroupStatus (vì data.status = PROCESSED_GROUP)
+  const sum = summarizeGroupStatus(data);
 
   // Group bookings theo tuần
   const bookingsByWeek = useMemo(() => {
@@ -738,7 +729,7 @@ function RecurringDetailModal({ data, onClose, onViewFull }) {
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <div className="text-gray-500 mb-1">Trạng thái</div>
-                  <Badge type={meta.type}>{meta.label}</Badge>
+                  <Badge type={sum.type}>{sum.label}</Badge>
                 </div>
                 <div>
                   <div className="text-gray-500 mb-1">Số buổi</div>
@@ -768,16 +759,40 @@ function RecurringDetailModal({ data, onClose, onViewFull }) {
                         const bookingSlot = pickSlots(booking);
                         const bookingStatus = normalizeStatus(booking?.status);
                         const bookingMeta = statusMeta(booking?.status);
-                        
+
+                        const canShowLogForChild = ["REJECTED", "CANCELLED", "CANCELED", "PREEMPTED"].includes(
+                          bookingStatus
+                        );
+
                         return (
-                          <div key={booking?.id || idx} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                          <div
+                            key={booking?.id || idx}
+                            className="flex items-center justify-between gap-3 p-2 bg-gray-50 rounded"
+                          >
                             <div className="flex-1">
                               <div className="text-sm font-medium text-gray-900">{bookingDate}</div>
                               <div className="text-xs text-gray-600">{bookingSlot}</div>
                             </div>
-                            <Badge type={bookingMeta.type} className="text-xs">
-                              {bookingMeta.label}
-                            </Badge>
+
+                            <div className="flex items-center gap-2">
+                              <Badge type={bookingMeta.type} className="text-xs">
+                                {bookingMeta.label}
+                              </Badge>
+
+                              {/* ✅ NEW: Xem log từng buổi */}
+                              {canShowLogForChild && (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  className="whitespace-nowrap"
+                                  title="Xem lý do"
+                                  onClick={() => onOpenLog?.(booking)}
+                                >
+                                  <Info className="w-4 h-4 mr-1" />
+                                  Xem lý do
+                                </Button>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
