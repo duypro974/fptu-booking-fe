@@ -189,13 +189,10 @@ export const api = {
   // PATCH /bookings/{id}/cancel-by-admin (Admin only)
   cancelByAdmin: async (bookingId, reason) => {
     try {
-      const payload = reason ? { reason } : {};
+      // Always send body with reason (required by backend)
       const data = await apiRequest(`/bookings/${bookingId}/cancel-by-admin`, {
         method: "PATCH",
-        body:
-          Object.keys(payload).length > 0
-            ? JSON.stringify(payload)
-            : undefined,
+        body: JSON.stringify({ reason: reason || "" }),
       });
       return data;
     } catch (error) {

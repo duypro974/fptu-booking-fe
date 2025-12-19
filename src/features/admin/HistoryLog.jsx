@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { History, Search, Filter, Building2, Package, Users, Eye, Calendar } from "lucide-react";
+import { useEffect, useState, useMemo } from "react";
+import { History, Search, Filter, Building2, Package, Users, Eye, Calendar, Check, X, AlertCircle, Download } from "lucide-react";
 import { getAllHistory } from "../../services/adminService";
 import { useAuth } from "../../context/AuthContext";
 import Card from "../../components/ui/Card";
@@ -63,7 +63,50 @@ export default function HistoryLog() {
     return matchesSearch && matchesFilter;
   });
 
-  const getEntityIcon = (type) => {
+  // Group history by date (DD/MM/YYYY)
+  const groupedHistory = useMemo(() => {
+    const groups = {};
+    filteredHistory.forEach((log) => {
+      // Extract date from timestamp
+      const dateStr = log.timestamp ? log.timestamp.split(',')[0] : new Date(log.startTime || Date.now()).toLocaleDateString('vi-VN');
+      if (!groups[dateStr]) {
+        groups[dateStr] = [];
+      }
+      groups[dateStr].push(log);
+    });
+    return groups;
+  }, [filteredHistory]);
+
+  // Format date label (Hôm nay, Hôm qua, hoặc date)
+  const formatDateLabel = (dateStr) => {
+    if (!dateStr) return dateStr;
+    const today = new Date().toLocaleDateString('vi-VN');
+    const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('vi-VN');
+    
+    if (dateStr === today) {
+      return `Hôm nay (${dateStr})`;
+    } else if (dateStr === yesterday) {
+      return `Hôm qua (${dateStr})`;
+    }
+    return dateStr;
+  };
+
+  // Get icon based on status for bookings, or entity type for others
+  const getEntityIcon = (type, status) => {
+    const statusUpper = String(status || "").toUpperCase();
+    
+    // For booking entity type, show status-specific icons
+    if (type === "booking") {
+      if (statusUpper === "REJECTED" || statusUpper === "CANCELLED" || statusUpper === "CANCELED") {
+        return <X className="w-4 h-4" />;
+      } else if (statusUpper === "APPROVED") {
+        return <Check className="w-4 h-4" />;
+      } else if (statusUpper === "PENDING") {
+        return <AlertCircle className="w-4 h-4" />;
+      }
+    }
+    
+    // Default icons for other entity types
     switch (type) {
       case "room":
         return <Building2 className="w-4 h-4" />;
@@ -74,6 +117,37 @@ export default function HistoryLog() {
       default:
         return <History className="w-4 h-4" />;
     }
+  };
+
+  // Get icon background and text color based on status
+  const getStatusIconStyle = (status, entityType) => {
+    const statusUpper = String(status || "").toUpperCase();
+    
+    // For booking entity type, show status-specific colors
+    if (entityType === "booking") {
+      if (statusUpper === "REJECTED" || statusUpper === "CANCELLED" || statusUpper === "CANCELED") {
+        return {
+          bg: "bg-red-50",
+          text: "text-red-600"
+        };
+      } else if (statusUpper === "APPROVED") {
+        return {
+          bg: "bg-green-50",
+          text: "text-green-600"
+        };
+      } else if (statusUpper === "PENDING") {
+        return {
+          bg: "bg-yellow-50",
+          text: "text-yellow-600"
+        };
+      }
+    }
+    
+    // Default: blue/gray for other types
+    return {
+      bg: "bg-blue-50",
+      text: "text-blue-600"
+    };
   };
 
   const getEntityTypeLabel = (type) => {
@@ -99,9 +173,22 @@ export default function HistoryLog() {
           <h1 className="text-2xl font-bold text-gray-900">Lịch sử thay đổi</h1>
           <p className="text-gray-500">Xem lịch sử thay đổi phòng, thiết bị và CLB tại {user?.campusName}.</p>
         </div>
-        <Badge type="info" className="text-base px-4 py-2">
-          {filteredHistory.length} bản ghi
-        </Badge>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            onClick={() => {
+              // TODO: Implement export Excel functionality
+              alert("Chức năng xuất Excel đang được phát triển");
+            }}
+            className="flex items-center gap-2"
+          >
+            <Download className="w-4 h-4" />
+            Xuất Excel
+          </Button>
+          <Badge type="info" className="text-base px-4 py-2">
+            {filteredHistory.length} bản ghi
+          </Badge>
+        </div>
       </div>
 
       {/* Filters */}
@@ -146,16 +233,38 @@ export default function HistoryLog() {
           <p className="text-gray-500 text-lg">Không tìm thấy lịch sử nào.</p>
         </Card>
       ) : (
-        <div className="space-y-3">
-          {filteredHistory.map((log, idx) => (
-            <div key={idx} className="space-y-0">
+        <div className="space-y-4">
+          {Object.entries(groupedHistory)
+            .sort(([dateA], [dateB]) => {
+              // Sort dates descending (newest first)
+              const dateAObj = new Date(dateA.split('/').reverse().join('-'));
+              const dateBObj = new Date(dateB.split('/').reverse().join('-'));
+              return dateBObj - dateAObj;
+            })
+            .map(([dateStr, logs]) => (
+              <div key={dateStr} className="space-y-3">
+                {/* Date Header */}
+                <div className="sticky top-0 z-10 bg-white border-b-2 border-orange-200 pb-2 mb-3">
+                  <h2 className="text-lg font-bold text-gray-900">{formatDateLabel(dateStr)}</h2>
+                </div>
+                
+                {/* Logs for this date */}
+                {logs.map((log, idx) => (
+                  <div key={`${dateStr}-${idx}`} className="space-y-0">
               <Card className="p-5 hover:shadow-md transition-shadow cursor-pointer" onClick={() => handleViewDetail(log.id === selectedLog?.id ? null : log)}>
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-start gap-4 flex-1">
-                    {/* Icon */}
-                    <div className="p-2 bg-gray-100 rounded-lg">
-                      {getEntityIcon(log.entityType)}
-                    </div>
+                    {/* Icon with status-based coloring */}
+                    {(() => {
+                      const iconStyle = getStatusIconStyle(log.status, log.entityType);
+                      return (
+                        <div className={`p-2 ${iconStyle.bg} rounded-lg`}>
+                          <div className={iconStyle.text}>
+                            {getEntityIcon(log.entityType, log.status)}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     
                     {/* Content */}
                     <div className="flex-1">
@@ -170,7 +279,7 @@ export default function HistoryLog() {
                       
                       {log.entityName && (
                         <p className="text-sm text-gray-700 mb-1">
-                          <span className="font-medium">{log.entityName}</span>
+                          <span className="font-bold text-orange-600">{log.entityName}</span>
                         </p>
                       )}
                       
@@ -212,7 +321,14 @@ export default function HistoryLog() {
                   <div className="space-y-4">
                     <div className="flex justify-between items-center mb-4 pb-3 border-b">
                       <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                        {getEntityIcon(selectedLog.entityType)}
+                        {(() => {
+                          const iconStyle = getStatusIconStyle(selectedLog.status, selectedLog.entityType);
+                          return (
+                            <div className={iconStyle.text}>
+                              {getEntityIcon(selectedLog.entityType, selectedLog.status)}
+                            </div>
+                          );
+                        })()}
                         Chi tiết đơn đặt phòng
                       </h3>
                       <button
@@ -379,8 +495,10 @@ export default function HistoryLog() {
                   </div>
                 </Card>
               )}
-            </div>
-          ))}
+                  </div>
+                ))}
+              </div>
+            ))}
         </div>
       )}
 
