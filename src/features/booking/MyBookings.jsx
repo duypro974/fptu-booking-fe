@@ -31,6 +31,57 @@ const statusMeta = (status) => {
   return { type: "warning", label: "Chờ duyệt" };
 };
 
+/* =========================================================
+   ✅ FIX: TÓM TẮT TRẠNG THÁI CHO BOOKING ĐỊNH KÌ (isGroup)
+   - Vì item.status của group là PROCESSED_GROUP (không map)
+   - Status thật nằm trong item.bookings[].status
+========================================================= */
+const summarizeGroupStatus = (item) => {
+  // booking thường: dùng như cũ
+  if (!item?.isGroup || !Array.isArray(item?.bookings) || item.bookings.length === 0) {
+    const st = normalizeStatus(item?.status);
+    const meta = statusMeta(st);
+    // Giữ label kiểu tiếng Việt chuẩn, không dùng "Thành công"
+    return { st, type: meta.type, label: statusToVi(st) };
+  }
+
+  const sts = item.bookings.map((b) => normalizeStatus(b?.status));
+  const total = sts.length;
+
+  const count = (x) => sts.filter((s) => s === x).length;
+  const approved = count("APPROVED");
+  const pending = count("PENDING");
+  const rejected = count("REJECTED");
+  const cancelled = count("CANCELLED") + count("CANCELED");
+  const preempted = count("PREEMPTED");
+  const completed = count("COMPLETED");
+
+  const bad = rejected + cancelled + preempted;
+
+  // Tất cả approved
+  if (approved === total) {
+    return { st: "APPROVED", type: "success", label: `Đã duyệt (${total}/${total})` };
+  }
+
+  // Tất cả completed
+  if (completed === total) {
+    return { st: "COMPLETED", type: "success", label: "Hoàn tất" };
+  }
+
+  // Có vấn đề
+  if (bad > 0) {
+    return { st: "ISSUE", type: "danger", label: `Có vấn đề (${bad}/${total})` };
+  }
+
+  // Còn pending
+  if (pending > 0) {
+    return { st: "PENDING", type: "warning", label: `Chờ duyệt (${pending}/${total})` };
+  }
+
+  // Fallback
+  return { st: "PENDING", type: "warning", label: `Đang xử lý (${approved}/${total})` };
+};
+
 // ===== SLOT DEFINITIONS (CỨNG) =====
 const SLOT_DEFS = [
   { id: 1, start: "07:00", end: "09:00" },
@@ -117,8 +168,7 @@ const extractLogInfo = (data) => {
   const fallbackReason = history?.[0]?.changeReason || data?.latestReason || "";
   const reason = terminalRow?.changeReason || fallbackReason || "";
 
-  const occurredAt =
-    terminalRow?.updatedAt || data?.updatedAt || data?.createdAt || null;
+  const occurredAt = terminalRow?.updatedAt || data?.updatedAt || data?.createdAt || null;
 
   const newStatus = terminalRow?.newStatus || data?.status || "";
 
@@ -303,9 +353,13 @@ export default function MyBookings() {
                 </tr>
               ) : (
                 rows.map((item, idx) => {
-                  const meta = statusMeta(item?.status);
+                  // ✅ FIX: dùng summary cho badge (định kì) + giữ status gốc cho action/log
+                  const sum = summarizeGroupStatus(item);
+
                   const canCancel = canCancelBooking(item);
                   const timeUntil = getTimeUntilBooking(item);
+
+                  // status gốc (để không phá hành vi cũ: log/cancel theo API hiện tại)
                   const status = normalizeStatus(item?.status);
                   const isCancelled = status === "CANCELLED" || status === "CANCELED";
 
@@ -316,7 +370,10 @@ export default function MyBookings() {
                     item?.bookingDate ||
                     item?.createdAt;
 
-                  const showLogBtn = ["REJECTED", "CANCELLED", "CANCELED", "PREEMPTED"].includes(status);
+                  // ✅ Nếu là group: hiện tại không mở log theo item.id (vì log đang theo booking đơn)
+                  const showLogBtn =
+                    !item?.isGroup &&
+                    ["REJECTED", "CANCELLED", "CANCELED", "PREEMPTED"].includes(status);
 
                   return (
                     <tr key={item?.id ?? idx} className="hover:bg-gray-50">
@@ -335,8 +392,9 @@ export default function MyBookings() {
                         )}
                       </td>
 
+                      {/* ✅ FIX: Badge dùng sum thay vì item.status */}
                       <td className="p-4 text-right">
-                        <Badge type={meta.type}>{meta.label}</Badge>
+                        <Badge type={sum.type}>{sum.label}</Badge>
                       </td>
 
                       <td className="p-4 text-right">
@@ -354,7 +412,6 @@ export default function MyBookings() {
                             </Button>
                           )}
 
-                        
                           {!isCancelled && canCancel && (
                             <Button
                               variant="danger"
@@ -389,7 +446,12 @@ export default function MyBookings() {
       </Card>
 
       {logOpen && (
-        <BookingLogModal loading={logLoading} error={logError} data={logData} onClose={closeLogModal} />
+        <BookingLogModal
+          loading={logLoading}
+          error={logError}
+          data={logData}
+          onClose={closeLogModal}
+        />
       )}
     </div>
   );
@@ -411,7 +473,10 @@ function BookingLogModal({ loading, error, data, onClose }) {
       <div className="relative bg-white w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
         <div className="p-5 border-b border-gray-100 flex items-center justify-between">
           <div className="text-lg font-bold text-gray-900">Log booking</div>
-          <button onClick={onClose} className="bg-gray-100 hover:bg-gray-200 text-gray-700 p-2 rounded-full">
+          <button
+            onClick={onClose}
+            className="bg-gray-100 hover:bg-gray-200 text-gray-700 p-2 rounded-full"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -420,7 +485,9 @@ function BookingLogModal({ loading, error, data, onClose }) {
           {loading ? (
             <div className="text-sm text-gray-500">Đang tải...</div>
           ) : error ? (
-            <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">{error}</div>
+            <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
+              {error}
+            </div>
           ) : !data ? (
             <div className="text-sm text-gray-500">Không có dữ liệu.</div>
           ) : !canShow ? (
@@ -432,7 +499,9 @@ function BookingLogModal({ loading, error, data, onClose }) {
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
                   <div className="text-gray-500">Phòng</div>
-                  <div className="font-semibold text-gray-900">{data?.facility?.name ?? "—"}</div>
+                  <div className="font-semibold text-gray-900">
+                    {data?.facility?.name ?? "—"}
+                  </div>
                 </div>
                 <div>
                   <div className="text-gray-500">Thời gian</div>

@@ -24,16 +24,12 @@ import {
 } from "lucide-react";
 
 const DEFAULT_SLOTS = [
-  { id: 1, start: "07:00", end: "08:30", label: "Slot 1" },
-  { id: 2, start: "08:30", end: "10:00", label: "Slot 2" },
-  { id: 3, start: "10:00", end: "11:30", label: "Slot 3" },
-  { id: 4, start: "11:30", end: "13:00", label: "Slot 4" },
-  { id: 5, start: "13:00", end: "14:30", label: "Slot 5" },
-  { id: 6, start: "14:30", end: "16:00", label: "Slot 6" },
-  { id: 7, start: "16:00", end: "17:30", label: "Slot 7" },
-  { id: 8, start: "17:30", end: "19:00", label: "Slot 8" },
-  { id: 9, start: "19:00", end: "20:30", label: "Slot 9" },
-  { id: 10, start: "20:30", end: "22:00", label: "Slot 10" },
+  { id: 1, start: "07:00", end: "09:00", label: "Slot 1" },
+  { id: 2, start: "09:00", end: "11:00", label: "Slot 2" },
+  { id: 3, start: "11:00", end: "13:00", label: "Slot 3" },
+  { id: 4, start: "13:00", end: "15:00", label: "Slot 4" },
+  { id: 5, start: "15:00", end: "17:00", label: "Slot 5" },
+  
 ];
 
 function toLocalYMD(date = new Date()) {
