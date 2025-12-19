@@ -128,6 +128,19 @@ export default function CheckInScanner() {
     return String(value);
   };
 
+  const formatDate = (value) => {
+    if (!value) return "—";
+    const d = new Date(value);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString("vi-VN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+    }
+    return String(value);
+  };
+
   const getStatusBadge = (booking) => {
     // backend của bạn có isCheckedIn (boolean)
     // nếu có thêm checkOutTime thì ưu tiên hiển thị check-out
