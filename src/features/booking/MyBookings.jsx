@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { X, Clock, Info, RefreshCw, Eye } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
 import Badge from "../../components/ui/Badge";
 import Card from "../../components/ui/Card";
 import Button from "../../components/ui/Button";
@@ -205,19 +206,76 @@ const pickFacilityName = (item) =>
   "—";
 
 const pickSlots = (item) => {
+  // Ưu tiên kiểm tra slots ở level group/item trước
+  const s = item?.slots ?? item?.slot ?? item?.slotIds;
+  if (Array.isArray(s) && s.length > 0) {
+    return s.map((n) => `Slot ${n}`).join(", ");
+  }
+  if (typeof s === "number") return `Slot ${s}`;
+  if (typeof s === "string") return s;
+
+  // Với booking định kỳ (isGroup)
   if (item?.isGroup && Array.isArray(item?.bookings) && item.bookings.length > 0) {
     const b0 = item.bookings[0];
-    return getSlotLabelFromTimes(b0?.startTime, b0?.endTime);
+    
+    // Thử lấy từ booking đầu tiên (có thể bao gồm nhiều slot)
+    const labelFromFirst = getSlotLabelFromTimes(b0?.startTime, b0?.endTime);
+    
+    // Nếu label từ booking đầu đã có nhiều slot (ví dụ "Slot 1, 2, 3"), dùng luôn
+    if (labelFromFirst && labelFromFirst.includes(",")) {
+      return labelFromFirst;
+    }
+    
+    // Nếu không, thu thập tất cả các slot từ các booking con
+    // Mỗi booking con có thể là một slot riêng
+    const allSlots = new Set();
+    item.bookings.forEach((booking) => {
+      // Thử lấy từ bookingSlots nếu có
+      if (Array.isArray(booking?.bookingSlots)) {
+        booking.bookingSlots.forEach((bs) => {
+          if (bs?.slot) allSlots.add(bs.slot);
+        });
+      }
+      
+      // Thử lấy từ slots field
+      if (Array.isArray(booking?.slots)) {
+        booking.slots.forEach((slotId) => allSlots.add(slotId));
+      }
+      if (typeof booking?.slot === "number") {
+        allSlots.add(booking.slot);
+      }
+      
+      // Tính toán từ startTime/endTime
+      if (booking?.startTime && booking?.endTime) {
+        const slotLabel = getSlotLabelFromTimes(booking.startTime, booking.endTime);
+        // Extract slot numbers từ label (ví dụ "Slot 1, 2, 3" -> [1, 2, 3])
+        const slotMatches = slotLabel.match(/Slot\s+(\d+(?:\s*,\s*\d+)*)/);
+        if (slotMatches) {
+          const slotNums = slotMatches[1].split(",").map((n) => parseInt(n.trim()));
+          slotNums.forEach((num) => allSlots.add(num));
+        } else {
+          // Nếu chỉ có 1 slot, extract số
+          const singleMatch = slotLabel.match(/Slot\s+(\d+)/);
+          if (singleMatch) {
+            allSlots.add(parseInt(singleMatch[1]));
+          }
+        }
+      }
+    });
+    
+    if (allSlots.size > 0) {
+      const sortedSlots = Array.from(allSlots).sort((a, b) => a - b);
+      return sortedSlots.map((n) => `Slot ${n}`).join(", ");
+    }
+    
+    // Fallback: dùng label từ booking đầu tiên
+    return labelFromFirst || "—";
   }
 
+  // Booking thường (không phải group)
   if (item?.startTime && item?.endTime) {
     return getSlotLabelFromTimes(item.startTime, item.endTime);
   }
-
-  const s = item?.slots ?? item?.slot;
-  if (Array.isArray(s)) return s.join(", ");
-  if (typeof s === "number") return `Slot ${s}`;
-  if (typeof s === "string") return s;
 
   if (Array.isArray(item?.bookingSlots)) {
     const slots = item.bookingSlots.map((x) => x?.slot).filter(Boolean);
@@ -247,10 +305,15 @@ const extractLogInfo = (data) => {
 
 export default function MyBookings() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [cancellingId, setCancellingId] = useState(null);
+
+  // Kiểm tra role của user
+  const userRole = (user?.role || "").toLowerCase();
+  const isLecturer = userRole === "lecturer";
 
   // ✅ MODAL LOG
   const [logOpen, setLogOpen] = useState(false);
@@ -289,6 +352,9 @@ export default function MyBookings() {
   const canCancelBooking = (booking) => {
     const status = normalizeStatus(booking?.status);
     if (status !== "APPROVED" && status !== "PENDING") return false;
+
+    // Lecture có thể hủy booking bất kỳ lúc nào (không cần kiểm tra thời gian)
+    if (isLecturer) return true;
 
     const startTime =
       booking?.startTime ||
@@ -517,7 +583,7 @@ export default function MyBookings() {
                                 setRecurringDetailOpen(true);
                               }}
                               className="whitespace-nowrap"
-                              title="Xem chi tiết đặt phòng định kỳ"
+                          
                             >
                               <Eye className="w-4 h-4 mr-1" />
                               Chi tiết
@@ -566,12 +632,6 @@ export default function MyBookings() {
                             </span>
                           )}
 
-                          {/* Thông báo cho booking định kỳ */}
-                          {isRecurring && (
-                            <span className="text-xs text-blue-600 italic" title="Để hủy đặt phòng định kỳ, vui lòng vào trang Đặt phòng định kỳ">
-                              Xem chi tiết để hủy
-                            </span>
-                          )}
                         </div>
                       </td>
                     </tr>
