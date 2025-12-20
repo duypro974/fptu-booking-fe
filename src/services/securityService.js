@@ -7,6 +7,7 @@ import api from "./api";
  * - PATCH /bookings/{id}/check-in
  * - PATCH /bookings/{id}/check-out
  * - POST  /reports/facility/{facilityId}
+ * - POST  /reports/booking
  */
 export const searchCheckinBookings = async (keyword = "") => {
   const res = await api.get("/bookings/guard/search", { params: { keyword } });
@@ -26,5 +27,11 @@ export const checkOutBooking = async (bookingId) => {
 export const reportFacilityIssue = async (facilityId, payload) => {
   // payload: { title, description, category, imageUrls }
   const res = await api.post(`/reports/facility/${facilityId}`, payload);
+  return res.data;
+};
+
+export const reportBookingIssue = async (payload) => {
+  // payload: { bookingId, title, description, category, imageUrls }
+  const res = await api.post("/reports/booking", payload);
   return res.data;
 };

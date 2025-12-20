@@ -22,8 +22,19 @@ export const getFacilities = async ({ campusId, typeId } = {}) => {
   if (campusId) params.campusId = campusId;
   if (typeId) params.typeId = typeId;
 
-  const res = await api.get(`${PREFIX}/facilities`, { params });
-  return res.data;
+  // Backend route: GET /facilities (Security Guard có quyền GET)
+  // Thử /facilities trước, nếu không được thì fallback về /resources/facilities
+  try {
+    const res = await api.get("/facilities", { params });
+    return res.data;
+  } catch (err) {
+    // Fallback về endpoint cũ nếu endpoint mới không hoạt động
+    if (err?.response?.status === 404) {
+      const res = await api.get(`${PREFIX}/facilities`, { params });
+      return res.data;
+    }
+    throw err;
+  }
 };
 
 export const getFacilityDetail = async (id) => (await api.get(`${PREFIX}/facilities/${id}`)).data;

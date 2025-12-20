@@ -21,9 +21,13 @@ import {
   checkInBooking,
   checkOutBooking,
   reportFacilityIssue,
+  reportBookingIssue,
 } from "../../services/securityService";
+import { getFacilities } from "../../services/resourceService";
+import { useAuth } from "../../context/AuthContext";
 
 export default function CheckInScanner() {
+  const { user } = useAuth();
   const [keyword, setKeyword] = useState("");
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -32,8 +36,11 @@ export default function CheckInScanner() {
 
   // Report issue state
   const [showReportForm, setShowReportForm] = useState(false);
+  const [reportType, setReportType] = useState("facility"); // "facility" | "booking"
+  const [selectedBookingForReport, setSelectedBookingForReport] = useState(null);
   const [reportData, setReportData] = useState({
     facilityId: "",
+    bookingId: null,
     title: "",
     description: "",
     category: "DAMAGE",
@@ -42,6 +49,10 @@ export default function CheckInScanner() {
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState("");
   const [reportSuccess, setReportSuccess] = useState(false);
+  
+  // Facilities list for dropdown
+  const [facilities, setFacilities] = useState([]);
+  const [loadingFacilities, setLoadingFacilities] = useState(false);
 
   const normalizeBookings = (data) => {
     if (Array.isArray(data)) return data;
@@ -150,46 +161,130 @@ export default function CheckInScanner() {
     return { type: "warning", label: "Chưa Check-in" };
   };
 
+  // Load facilities when form is opened
+  const loadFacilities = async () => {
+    if (!user) return;
+    
+    setLoadingFacilities(true);
+    try {
+      const campusId = user?.campusId || (user?.campus === "hcm" ? 2 : user?.campus === "hn" ? 1 : null);
+      const data = await getFacilities({ campusId });
+      const list = Array.isArray(data) ? data : data?.items ?? data?.data ?? [];
+      setFacilities(list);
+    } catch (err) {
+      console.error("[CheckInScanner] Error loading facilities:", err);
+      setFacilities([]);
+    } finally {
+      setLoadingFacilities(false);
+    }
+  };
+
+  // Load facilities when form is opened
+  const handleToggleReportForm = () => {
+    const newShow = !showReportForm;
+    setShowReportForm(newShow);
+    setReportError("");
+    setReportSuccess(false);
+    
+    if (newShow && facilities.length === 0 && reportType === "facility") {
+      loadFacilities();
+    }
+  };
+
+  const handleOpenBookingReport = (booking) => {
+    setSelectedBookingForReport(booking);
+    setReportType("booking");
+    setReportData({
+      facilityId: "",
+      bookingId: booking.id,
+      title: "",
+      description: "",
+      category: "INCIDENT",
+      imageUrls: [""],
+    });
+    setShowReportForm(true);
+    setReportError("");
+    setReportSuccess(false);
+  };
+
   const handleReportIssue = async (e) => {
     e.preventDefault();
     setReportLoading(true);
     setReportError("");
     setReportSuccess(false);
 
-    if (!reportData.facilityId || !reportData.title || !reportData.description) {
+    if (!reportData.title || !reportData.description) {
       setReportError("Vui lòng điền đầy đủ thông tin báo cáo.");
       setReportLoading(false);
       return;
     }
 
-    try {
-      const payload = {
-        title: reportData.title,
-        description: reportData.description,
-        category: reportData.category,
-        imageUrls: reportData.imageUrls.filter((url) => url.trim() !== ""),
-      };
+    // Validate theo loại report
+    if (reportType === "facility" && !reportData.facilityId) {
+      setReportError("Vui lòng chọn phòng.");
+      setReportLoading(false);
+      return;
+    }
 
-      await reportFacilityIssue(Number(reportData.facilityId), payload);
+    if (reportType === "booking" && !reportData.bookingId) {
+      setReportError("Vui lòng chọn booking.");
+      setReportLoading(false);
+      return;
+    }
+
+    try {
+      if (reportType === "facility") {
+        // Report theo phòng: POST /reports/facility/{facilityId}
+        const payload = {
+          title: reportData.title || "Facility Issue",
+          category: reportData.category || "DAMAGE",
+          description: reportData.description,
+          imageUrls: reportData.imageUrls.filter((url) => url.trim() !== ""),
+        };
+        
+        console.log("[CheckInScanner] Reporting facility issue:", {
+          facilityId: reportData.facilityId,
+          payload
+        });
+        
+        await reportFacilityIssue(Number(reportData.facilityId), payload);
+      } else {
+        // Report theo booking: POST /reports/booking
+        const payload = {
+          bookingId: Number(reportData.bookingId),
+          title: reportData.title || "Booking Issue",
+          category: reportData.category || "INCIDENT",
+          description: reportData.description,
+          imageUrls: reportData.imageUrls.filter((url) => url.trim() !== ""),
+        };
+        
+        console.log("[CheckInScanner] Reporting booking issue:", payload);
+        
+        await reportBookingIssue(payload);
+      }
 
       setReportSuccess(true);
       setReportData({
         facilityId: "",
+        bookingId: null,
         title: "",
         description: "",
-        category: "DAMAGE",
+        category: reportType === "facility" ? "DAMAGE" : "INCIDENT",
         imageUrls: [""],
       });
+      setSelectedBookingForReport(null);
+      setReportType("facility");
 
       setTimeout(() => {
         setShowReportForm(false);
         setReportSuccess(false);
       }, 2000);
     } catch (err) {
+      console.error("[CheckInScanner] Report error:", err);
       setReportError(
         err?.response?.data?.message ||
           err?.message ||
-          "Báo cáo sự cố thất bại."
+          "Không thể gửi báo cáo sự cố."
       );
     } finally {
       setReportLoading(false);
@@ -331,7 +426,7 @@ export default function CheckInScanner() {
                       )}
                     </div>
 
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
                       {canCheckIn && (
                         <Button
                           variant="success"
@@ -367,6 +462,17 @@ export default function CheckInScanner() {
                           )}
                         </Button>
                       )}
+
+                      {/* Nút báo cáo sự cố cho booking */}
+                      <Button
+                        variant="secondary"
+                        onClick={() => handleOpenBookingReport(booking)}
+                        className="whitespace-nowrap"
+                        title="Báo cáo sự cố trong giờ booking"
+                      >
+                        <AlertTriangle className="w-4 h-4 mr-1" />
+                        Báo cáo
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -382,44 +488,92 @@ export default function CheckInScanner() {
         </Card>
       )}
 
-      {/* Report Facility Issue Section */}
+      {/* Report Issue Section */}
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 text-orange-500" />
-              Báo cáo sự cố phòng
+              {reportType === "booking" ? "Báo cáo sự cố trong giờ Booking" : "Báo cáo sự cố phòng"}
             </h2>
-            <p className="text-sm text-gray-600 mt-1">Báo cáo sự cố, hư hỏng của phòng</p>
+            <p className="text-sm text-gray-600 mt-1">
+              {reportType === "booking" 
+                ? "Báo cáo sự cố xảy ra trong giờ booking" 
+                : "Báo cáo sự cố, hư hỏng của phòng"}
+            </p>
           </div>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              setShowReportForm(!showReportForm);
-              setReportError("");
-              setReportSuccess(false);
-            }}
-          >
-            {showReportForm ? "Ẩn form" : "Báo cáo sự cố"}
-          </Button>
+          {reportType === "facility" && (
+            <Button
+              variant="secondary"
+              onClick={handleToggleReportForm}
+            >
+              {showReportForm ? "Ẩn form" : "Báo cáo sự cố"}
+            </Button>
+          )}
         </div>
 
         {showReportForm && (
           <form onSubmit={handleReportIssue} className="space-y-4 mt-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                  Mã phòng (Facility ID) *
-                </label>
-                <input
-                  type="number"
-                  required
-                  value={reportData.facilityId}
-                  onChange={(e) => setReportData({ ...reportData, facilityId: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none"
-                  placeholder="Nhập ID phòng"
-                />
+            {/* Hiển thị thông tin booking nếu là report booking */}
+            {reportType === "booking" && selectedBookingForReport && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-semibold text-blue-900">Thông tin Booking</h3>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setShowReportForm(false);
+                      setSelectedBookingForReport(null);
+                      setReportType("facility");
+                    }}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-sm text-blue-800">
+                  <div><strong>Mã:</strong> {selectedBookingForReport.bookingCode || `#${selectedBookingForReport.id}`}</div>
+                  <div><strong>Phòng:</strong> {selectedBookingForReport.facility?.name || selectedBookingForReport.facilityName || "—"}</div>
+                  <div><strong>Người đặt:</strong> {selectedBookingForReport.user?.fullName || selectedBookingForReport.fullName || "—"}</div>
+                  <div><strong>Thời gian:</strong> {formatDateTime(selectedBookingForReport.startTime)} → {formatDateTime(selectedBookingForReport.endTime)}</div>
+                </div>
               </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Chỉ hiển thị chọn phòng nếu là report facility */}
+              {reportType === "facility" && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                    Chọn phòng *
+                  </label>
+                {loadingFacilities ? (
+                  <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 text-sm">
+                    Đang tải danh sách phòng...
+                  </div>
+                ) : (
+                  <select
+                    required
+                    value={reportData.facilityId}
+                    onChange={(e) => setReportData({ ...reportData, facilityId: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none bg-white"
+                  >
+                    <option value="">-- Chọn phòng --</option>
+                    {facilities.map((facility) => (
+                      <option key={facility.id} value={facility.id}>
+                        {facility.name} {facility.type?.name ? `(${facility.type.name})` : facility.typeName ? `(${facility.typeName})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {facilities.length === 0 && !loadingFacilities && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Không có phòng nào. Vui lòng thử lại sau.
+                  </p>
+                )}
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">
@@ -431,10 +585,22 @@ export default function CheckInScanner() {
                   onChange={(e) => setReportData({ ...reportData, category: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none"
                 >
-                  <option value="DAMAGE">Hư hỏng</option>
-                  <option value="MAINTENANCE">Bảo trì</option>
-                  <option value="CLEANING">Vệ sinh</option>
-                  <option value="OTHER">Khác</option>
+                  {reportType === "booking" ? (
+                    <>
+                      <option value="INCIDENT">Sự cố</option>
+                      <option value="DAMAGE">Hư hỏng</option>
+                      <option value="MAINTENANCE">Bảo trì</option>
+                      <option value="CLEANING">Vệ sinh</option>
+                      <option value="OTHER">Khác</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="DAMAGE">Hư hỏng</option>
+                      <option value="MAINTENANCE">Bảo trì</option>
+                      <option value="CLEANING">Vệ sinh</option>
+                      <option value="OTHER">Khác</option>
+                    </>
+                  )}
                 </select>
               </div>
             </div>
@@ -520,11 +686,14 @@ export default function CheckInScanner() {
                   setShowReportForm(false);
                   setReportData({
                     facilityId: "",
+                    bookingId: null,
                     title: "",
                     description: "",
-                    category: "DAMAGE",
+                    category: reportType === "facility" ? "DAMAGE" : "INCIDENT",
                     imageUrls: [""],
                   });
+                  setSelectedBookingForReport(null);
+                  setReportType("facility");
                   setReportError("");
                   setReportSuccess(false);
                 }}
