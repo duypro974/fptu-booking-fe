@@ -39,6 +39,16 @@ function toLocalYMD(date = new Date()) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function parseTimeToMinutes(t) {
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function nowMinutes() {
+  const d = new Date();
+  return d.getHours() * 60 + d.getMinutes();
+}
+
 export default function RecurringBooking() {
   const { user } = useAuth();
   const [step, setStep] = useState("setup"); // "setup" | "scan" | "confirm" | "success"
@@ -48,7 +58,6 @@ export default function RecurringBooking() {
   const [selectedSlots, setSelectedSlots] = useState([]);
   const [startDate, setStartDate] = useState(() => toLocalYMD(new Date()));
   const [weeks, setWeeks] = useState(10);
-  const [capacity, setCapacity] = useState("");
   const [typeId, setTypeId] = useState("");
   const [purpose, setPurpose] = useState("");
   const [attendeeCount, setAttendeeCount] = useState("");
@@ -74,13 +83,25 @@ export default function RecurringBooking() {
   const [successData, setSuccessData] = useState(null);
 
   const todayYMD = toLocalYMD(new Date());
+  const isToday = startDate === todayYMD;
+
+  const slotExpired = (slot) => {
+    if (!isToday) return false;
+    return parseTimeToMinutes(slot.end) <= nowMinutes();
+  };
+
+  const slotOngoing = (slot) => {
+    if (!isToday) return false;
+    const now = nowMinutes();
+    return parseTimeToMinutes(slot.start) <= now && now < parseTimeToMinutes(slot.end);
+  };
 
   // Load facilities and types
   useEffect(() => {
     if (!user) return;
     loadFacilityTypes();
     loadFacilities();
-  }, [user, typeId, capacity]);
+  }, [user, typeId]);
 
   const loadFacilityTypes = async () => {
     try {
@@ -97,7 +118,6 @@ export default function RecurringBooking() {
     try {
       const filters = {};
       if (typeId) filters.typeId = Number(typeId);
-      if (capacity) filters.capacity = Number(capacity);
 
       const data = await getFacilities(filters);
       const facilitiesList = Array.isArray(data) ? data : data?.items ?? [];
@@ -127,6 +147,14 @@ export default function RecurringBooking() {
   }, [facilityId, facilities]);
 
   const handleSlotToggle = (slotId) => {
+    const slot = DEFAULT_SLOTS.find((s) => s.id === slotId);
+    if (!slot) return;
+
+    // Chặn không cho chọn slot đã qua hoặc đang diễn ra
+    if (slotExpired(slot) || slotOngoing(slot)) {
+      return;
+    }
+
     setSelectedSlots((prev) =>
       prev.includes(slotId)
         ? prev.filter((id) => id !== slotId)
@@ -160,7 +188,6 @@ export default function RecurringBooking() {
         startDate: startDate,
         weeks: weeks,
         slot: selectedSlots,
-        capacity: capacity ? Number(capacity) : 0,
         typeId: typeId ? Number(typeId) : 0,
       };
 
@@ -168,11 +195,33 @@ export default function RecurringBooking() {
       const results = await scanRecurringAvailability(payload);
       console.log("[RecurringBooking] Scan results:", results);
 
-      setScanResults(Array.isArray(results) ? results : []);
+      const now = new Date();
+      // Filter out slots that are in the past or currently happening
+      const validResults = (Array.isArray(results) ? results : []).filter((result) => {
+        const startDateObj = new Date(startDate);
+        const weekDate = new Date(startDateObj);
+        weekDate.setDate(startDateObj.getDate() + (result.week - 1) * 7);
+
+        // Check if any selected slot is in the past or currently happening
+        const hasInvalidSlot = selectedSlots.some((slotId) => {
+          const slot = DEFAULT_SLOTS.find((s) => s.id === slotId);
+          if (!slot) return false;
+
+          const startDateTime = new Date(weekDate);
+          const [startHour, startMin] = slot.start.split(":").map(Number);
+          startDateTime.setHours(startHour, startMin, 0, 0);
+
+          return startDateTime < now;
+        });
+
+        return !hasInvalidSlot;
+      });
+
+      setScanResults(validResults);
       setStep("confirm");
 
-      // Auto-select all available weeks
-      const availableWeeks = results
+      // Auto-select all available weeks (only from valid results)
+      const availableWeeks = validResults
         .filter((r) => r.status === "AVAILABLE")
         .map((r) => r.week);
       setSelectedWeeks(availableWeeks);
@@ -215,6 +264,9 @@ export default function RecurringBooking() {
     setCreateError("");
 
     try {
+      const now = new Date();
+      const invalidSlots = [];
+
       // Build bookings array for selected weeks
       const bookings = selectedWeeks
         .map((week) => {
@@ -239,6 +291,13 @@ export default function RecurringBooking() {
             const [endHour, endMin] = slot.end.split(":").map(Number);
             endDateTime.setHours(endHour, endMin, 0, 0);
 
+            // Validate slot không được là quá khứ hoặc đang diễn ra
+            if (startDateTime < now) {
+              const dateStr = weekDate.toLocaleDateString("vi-VN");
+              invalidSlots.push(`Tuần ${week} (${dateStr}) - ${slot.label}`);
+              return null;
+            }
+
             // Use original facilityId for all bookings
             // Backend will handle alternative facilities for CONFLICT_RESOLVED status
             // The scan result's facilityName is just for display
@@ -254,6 +313,22 @@ export default function RecurringBooking() {
           return slotBookings.filter(Boolean);
         })
         .flat();
+
+      // Kiểm tra nếu có slot không hợp lệ
+      if (invalidSlots.length > 0) {
+        setCreateError(
+          `Không thể đặt các slot sau vì đã qua hoặc đang diễn ra: ${invalidSlots.join(", ")}`
+        );
+        setCreating(false);
+        return;
+      }
+
+      // Kiểm tra nếu không có booking nào hợp lệ
+      if (bookings.length === 0) {
+        setCreateError("Không có slot nào hợp lệ để đặt phòng. Vui lòng chọn lại.");
+        setCreating(false);
+        return;
+      }
 
       // Combine purpose and support note for the note field
       let noteText = purpose.trim();
@@ -348,22 +423,6 @@ export default function RecurringBooking() {
               </select>
             </div>
 
-            {/* Capacity Filter */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                <Users className="w-4 h-4 text-gray-500" />
-                Sức chứa tối thiểu
-              </label>
-              <input
-                type="number"
-                min="1"
-                value={capacity}
-                onChange={(e) => setCapacity(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
-                placeholder="Không giới hạn"
-              />
-            </div>
-
             {/* Facility Selection */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -438,25 +497,46 @@ export default function RecurringBooking() {
 
             {/* Slot Selection */}
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
+              <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-gray-500" />
                 Chọn slot <span className="text-red-500">*</span>
               </label>
+              <p className="text-xs text-gray-500 mb-3">
+                Slot đã qua / đang diễn ra sẽ bị khóa
+              </p>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                {DEFAULT_SLOTS.map((slot) => (
-                  <button
-                    key={slot.id}
-                    type="button"
-                    onClick={() => handleSlotToggle(slot.id)}
-                    className={`px-3 py-2 rounded-lg border-2 text-sm font-medium transition-all ${
-                      selectedSlots.includes(slot.id)
-                        ? "bg-orange-50 border-orange-500 text-orange-700"
-                        : "bg-white border-gray-300 text-gray-700 hover:border-orange-300"
-                    }`}
-                  >
-                    <div className="text-xs">{slot.label}</div>
-                    <div className="text-xs text-gray-500">{slot.start}-{slot.end}</div>
-                  </button>
-                ))}
+                {DEFAULT_SLOTS.map((slot) => {
+                  const expired = slotExpired(slot);
+                  const ongoing = slotOngoing(slot);
+                  const disabled = expired || ongoing;
+                  const isSelected = selectedSlots.includes(slot.id);
+
+                  let title = "";
+                  if (expired) title = "Slot đã qua giờ";
+                  else if (ongoing) title = "Slot đang diễn ra";
+
+                  return (
+                    <button
+                      key={slot.id}
+                      type="button"
+                      onClick={() => handleSlotToggle(slot.id)}
+                      disabled={disabled}
+                      title={title}
+                      className={`px-3 py-2 rounded-lg border-2 text-sm font-medium transition-all ${
+                        disabled
+                          ? "bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed opacity-60"
+                          : isSelected
+                          ? "bg-orange-50 border-orange-500 text-orange-700"
+                          : "bg-white border-gray-300 text-gray-700 hover:border-orange-300"
+                      }`}
+                    >
+                      <div className="text-xs">{slot.label}</div>
+                      <div className="text-xs text-gray-500">{slot.start}-{slot.end}</div>
+                      {expired && <div className="text-[10px] mt-1 text-gray-500">Đã qua giờ</div>}
+                      {!expired && ongoing && <div className="text-[10px] mt-1 text-gray-500">Đang diễn ra</div>}
+                    </button>
+                  );
+                })}
               </div>
               {selectedSlots.length > 0 && (
                 <p className="text-xs text-gray-500 mt-2">

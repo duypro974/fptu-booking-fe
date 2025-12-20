@@ -47,9 +47,20 @@ export default function BookingForm({
       return;
     }
 
-    // Validate conflict trước khi submit
-    const timeRange = calculateTimeRange(selectedDate || toDateISO_Local(new Date()), selectedSlots);
+    // Validate slot không được là quá khứ hoặc đang diễn ra
+    const bookingDate = selectedDate || toDateISO_Local(new Date());
+    const timeRange = calculateTimeRange(bookingDate, selectedSlots);
     if (timeRange) {
+      const now = new Date();
+      // Kiểm tra nếu slot đã qua hoặc đang diễn ra
+      if (timeRange.startTime < now) {
+        const slotLabel = selectedSlots.map(id => `Slot ${id}`).join(", ");
+        setError(`Không thể đặt ${slotLabel} vì slot này đã qua hoặc đang diễn ra.`);
+        setLoading(false);
+        return;
+      }
+
+      // Validate conflict trước khi submit
       const conflict = checkUserConflict(timeRange.startTime, timeRange.endTime, userBookings);
       if (conflict) {
         const conflictRoom = conflict.facility?.name || conflict.facilityName || "phòng khác";

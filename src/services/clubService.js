@@ -79,3 +79,42 @@ export const removeClubPriority = async (clubId, facilityId) => {
     throw error;
   }
 };
+
+// GET /clubs/:id - Lấy thông tin chi tiết club (bao gồm leaders)
+export const getClubDetail = async (clubId) => {
+  try {
+    const data = await apiRequest(`/clubs/${clubId}`);
+    return data;
+  } catch (error) {
+    console.error('[getClubDetail] Error:', error);
+    throw error;
+  }
+};
+
+// POST /clubs/:id/leaders - Thêm leader cho club
+// Payload: { email: string } hoặc { studentId: number } - cần xác nhận với backend
+export const addClubLeader = async (clubId, payload) => {
+  try {
+    const data = await apiRequest(`/clubs/${clubId}/leaders`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    return data;
+  } catch (error) {
+    console.error('[addClubLeader] Error:', error);
+    throw error;
+  }
+};
+
+// DELETE /clubs/:id/leaders/:studentId - Xóa leader khỏi club
+export const removeClubLeader = async (clubId, studentId) => {
+  try {
+    const data = await apiRequest(`/clubs/${clubId}/leaders/${studentId}`, {
+      method: 'DELETE'
+    });
+    return data;
+  } catch (error) {
+    console.error('[removeClubLeader] Error:', error);
+    throw error;
+  }
+};

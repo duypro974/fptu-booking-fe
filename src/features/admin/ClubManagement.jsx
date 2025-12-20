@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, Edit2, Trash2, Search, Users, UserPlus, Building2, Eye, History } from "lucide-react";
+import { Plus, Edit2, Trash2, Search, Users, UserPlus, Building2, Eye, History, Loader2 } from "lucide-react";
 import { api } from "../../services/api";
 import { addClubPriority, removeClubPriority } from "../../services/clubService";
 import { useAuth } from "../../context/AuthContext";
@@ -21,6 +21,10 @@ export default function ClubManagement() {
   const [viewingClub, setViewingClub] = useState(null);
   const [clubHistory, setClubHistory] = useState([]);
   const [detailTab, setDetailTab] = useState("info");
+  const [leaders, setLeaders] = useState([]);
+  const [loadingLeaders, setLoadingLeaders] = useState(false);
+  const [newLeaderEmail, setNewLeaderEmail] = useState("");
+  const [addingLeader, setAddingLeader] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -307,9 +311,221 @@ export default function ClubManagement() {
     setShowDetailModal(true);
   };
 
-  const handleManageLeaders = (club) => {
+  const handleManageLeaders = async (club) => {
     setSelectedClub(club);
     setShowLeaderModal(true);
+    setNewLeaderEmail("");
+    await loadLeaders(club.id);
+  };
+
+  const loadLeaders = async (clubId) => {
+    setLoadingLeaders(true);
+    try {
+      console.log('[loadLeaders] Fetching club detail for clubId:', clubId);
+      
+      // Fallback: Nếu getClubDetail 404, thử dùng clubs list hiện có
+      let clubDetail = null;
+      try {
+        clubDetail = await api.getClubDetail(clubId);
+        console.log('[loadLeaders] Club detail from API:', clubDetail);
+      } catch (apiError) {
+        console.warn('[loadLeaders] getClubDetail failed, trying to use existing club data:', apiError);
+        // Fallback: Tìm club trong danh sách hiện có
+        const existingClub = clubs.find(c => c.id === clubId);
+        if (existingClub) {
+          clubDetail = existingClub;
+          console.log('[loadLeaders] Using existing club data from state:', clubDetail);
+        } else {
+          // Nếu không tìm thấy, thử reload danh sách clubs
+          console.log('[loadLeaders] Club not found in state, reloading clubs list...');
+          // Lấy campusId
+          let campusId = user?.campusId;
+          if (!campusId && typeof user?.campus === 'number') {
+            campusId = user.campus;
+          } else if (!campusId && typeof user?.campus === 'string') {
+            const campusMap = { hcm: 2, hn: 1, dn: 3, ct: 4, qn: 5 };
+            campusId = campusMap[user.campus.toLowerCase()] || null;
+          }
+          const clubsData = await api.getClubs(campusId);
+          const foundClub = clubsData?.find(c => c.id === clubId);
+          if (foundClub) {
+            clubDetail = foundClub;
+            console.log('[loadLeaders] Found club after reloading:', clubDetail);
+          } else {
+            throw new Error('Club not found');
+          }
+        }
+      }
+      
+      if (!clubDetail) {
+        console.error('[loadLeaders] Club detail is null/undefined');
+        setLeaders([]);
+        return;
+      }
+      
+      console.log('[loadLeaders] Checking leaders field:', {
+        hasLeaders: Array.isArray(clubDetail.leaders),
+        leadersLength: clubDetail.leaders?.length,
+        hasLeader: !!clubDetail.leader,
+        hasLeaderEmail: !!clubDetail.leaderEmail,
+        hasLeaderId: !!clubDetail.leaderId
+      });
+      
+      // Xử lý nhiều format: leaders (array), leader (single), leaderEmail
+      let leadersList = [];
+      if (Array.isArray(clubDetail.leaders) && clubDetail.leaders.length > 0) {
+        leadersList = clubDetail.leaders;
+        console.log('[loadLeaders] Using leaders array:', leadersList);
+      } else if (clubDetail.leader) {
+        leadersList = [clubDetail.leader];
+        console.log('[loadLeaders] Using single leader object:', leadersList);
+      } else if (clubDetail.leaderEmail) {
+        // Nếu chỉ có email và ID, tạo object
+        leadersList = [{
+          id: clubDetail.leaderId || null,
+          studentId: clubDetail.leaderId || null,
+          email: clubDetail.leaderEmail,
+          fullName: clubDetail.leader?.fullName || clubDetail.leader?.name || clubDetail.leaderEmail
+        }];
+        console.log('[loadLeaders] Using leaderEmail to create leader object:', leadersList);
+      }
+      
+      console.log('[loadLeaders] Final leaders list:', leadersList);
+      setLeaders(leadersList);
+    } catch (error) {
+      console.error('[loadLeaders] Error loading leaders:', error);
+      console.error('[loadLeaders] Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      setLeaders([]);
+    } finally {
+      setLoadingLeaders(false);
+    }
+  };
+
+  const handleAddLeader = async () => {
+    if (!newLeaderEmail.trim()) {
+      alert("Vui lòng nhập email sinh viên");
+      return;
+    }
+
+    if (!selectedClub?.id) {
+      alert("Không tìm thấy thông tin CLB");
+      return;
+    }
+
+    // Cảnh báo nếu đã có leader (vì sẽ thay thế)
+    if (leaders.length > 0) {
+      const currentLeader = leaders[0];
+      const currentLeaderName = currentLeader.fullName || currentLeader.name || currentLeader.email || "leader hiện tại";
+      if (!window.confirm(`Club đã có leader: ${currentLeaderName}. Thêm leader mới sẽ thay thế leader cũ. Bạn có muốn tiếp tục?`)) {
+        return;
+      }
+    }
+
+    setAddingLeader(true);
+    try {
+      // Dùng PUT /clubs/:id với leaderEmail để gán leader (giống như POST /clubs khi tạo)
+      // Backend sẽ tìm User tương ứng với email và gán làm leader
+      // Lấy thông tin club hiện tại để merge với leaderEmail
+      const updatePayload = {
+        name: selectedClub.name,
+        description: selectedClub.description || "",
+        campusId: selectedClub.campusId || selectedClub.campus,
+        leaderEmail: newLeaderEmail.trim() // Gán leader bằng email (sẽ thay thế leader cũ nếu có)
+      };
+      
+      // Nếu club có code, giữ nguyên
+      if (selectedClub.code) {
+        updatePayload.code = selectedClub.code;
+      }
+      
+      console.log('[handleAddLeader] Calling updateClub API with payload:', updatePayload, 'for clubId:', selectedClub.id);
+      
+      const response = await api.updateClub(selectedClub.id, updatePayload);
+      console.log('[handleAddLeader] API response:', response);
+      
+      // Reload danh sách leaders
+      console.log('[handleAddLeader] Reloading leaders list...');
+      await loadLeaders(selectedClub.id);
+      
+      // Xóa input
+      setNewLeaderEmail("");
+      
+      // Reload danh sách clubs để cập nhật leaderCount
+      console.log('[handleAddLeader] Reloading clubs list...');
+      await loadData();
+      
+      alert("Thêm leader thành công!");
+    } catch (error) {
+      console.error('[handleAddLeader] Error:', error);
+      console.error('[handleAddLeader] Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        fullError: error
+      });
+      const errorMessage = error.message || error.response?.data?.message || "Không thể thêm leader. Vui lòng thử lại.";
+      alert(errorMessage.includes("not found") || errorMessage.includes("không tìm thấy") || errorMessage.includes("404")
+        ? "Không tìm thấy sinh viên với email này trong database" 
+        : errorMessage);
+    } finally {
+      setAddingLeader(false);
+    }
+  };
+
+  const handleRemoveLeader = async (studentId) => {
+    if (!selectedClub?.id) {
+      alert("Không tìm thấy thông tin CLB");
+      return;
+    }
+
+    if (!window.confirm("Bạn có chắc chắn muốn xóa leader này không?")) {
+      return;
+    }
+
+    try {
+      // Dùng PUT /clubs/:id với leaderEmail = null để xóa leader
+      // Lấy thông tin club hiện tại để merge
+      const updatePayload = {
+        name: selectedClub.name,
+        description: selectedClub.description || "",
+        campusId: selectedClub.campusId || selectedClub.campus,
+        leaderEmail: null // Xóa leader bằng cách set null
+      };
+      
+      // Nếu club có code, giữ nguyên
+      if (selectedClub.code) {
+        updatePayload.code = selectedClub.code;
+      }
+      
+      console.log('[handleRemoveLeader] Calling updateClub API to remove leader, payload:', updatePayload, 'for clubId:', selectedClub.id);
+      
+      const response = await api.updateClub(selectedClub.id, updatePayload);
+      console.log('[handleRemoveLeader] API response:', response);
+      
+      // Reload danh sách leaders
+      console.log('[handleRemoveLeader] Reloading leaders list...');
+      await loadLeaders(selectedClub.id);
+      
+      // Reload danh sách clubs để cập nhật leaderCount
+      console.log('[handleRemoveLeader] Reloading clubs list...');
+      await loadData();
+      
+      alert("Xóa leader thành công!");
+    } catch (error) {
+      console.error('[handleRemoveLeader] Error:', error);
+      console.error('[handleRemoveLeader] Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        fullError: error
+      });
+      const errorMessage = error.message || error.response?.data?.message || "Không thể xóa leader. Vui lòng thử lại.";
+      alert(errorMessage);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -682,33 +898,120 @@ export default function ClubManagement() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <Card className="max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold text-gray-900">
+              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-purple-600" />
                 Quản lý Leader - {selectedClub.name}
               </h2>
               <button
-                onClick={() => setShowLeaderModal(false)}
-                className="text-gray-400 hover:text-gray-600 text-2xl"
+                onClick={() => {
+                  setShowLeaderModal(false);
+                  setLeaders([]);
+                  setNewLeaderEmail("");
+                }}
+                className="text-gray-400 hover:text-gray-600 text-2xl transition-colors"
               >
                 ×
               </button>
             </div>
 
-            <div className="space-y-4">
-              <p className="text-sm text-gray-600">
-                Tính năng quản lý Leader sẽ được tích hợp với API để thêm/xóa sinh viên làm Leader của CLB.
-              </p>
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-sm text-gray-500">
-                  API endpoint: <code className="bg-white px-2 py-1 rounded">POST /api/clubs/{selectedClub.id}/leaders</code>
-                </p>
-                <p className="text-sm text-gray-500 mt-2">
-                  API endpoint: <code className="bg-white px-2 py-1 rounded">DELETE /api/clubs/{selectedClub.id}/leaders/:studentId</code>
-                </p>
+            <div className="space-y-6">
+              {/* Danh sách Leaders hiện tại */}
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-3">Danh sách Leaders</h3>
+                {loadingLeaders ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-orange-600" />
+                    <span className="ml-2 text-gray-600">Đang tải...</span>
+                  </div>
+                ) : leaders.length === 0 ? (
+                  <div className="bg-gray-50 rounded-lg p-6 text-center">
+                    <Users className="w-12 h-12 text-gray-300 mx-auto mb-2" />
+                    <p className="text-gray-500">Chưa có leader nào</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {leaders.map((leader, index) => (
+                      <div
+                        key={leader.id || index}
+                        className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200"
+                      >
+                        <div className="flex-1">
+                          <p className="font-medium text-gray-900">
+                            {leader.fullName || leader.name || "Không có tên"}
+                          </p>
+                          <p className="text-sm text-gray-500 mt-1">
+                            {leader.email || leader.mssv || "Không có email"}
+                          </p>
+                          {leader.mssv && (
+                            <p className="text-xs text-gray-400 mt-1">MSSV: {leader.mssv}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => {
+                            const idToRemove = leader.id || leader.studentId || leader.userId;
+                            console.log('[Modal] Removing leader with ID:', idToRemove, 'Leader object:', leader);
+                            if (!idToRemove) {
+                              alert("Không tìm thấy ID của leader để xóa");
+                              return;
+                            }
+                            handleRemoveLeader(idToRemove);
+                          }}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Xóa leader"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-              <div className="flex justify-end">
+
+              {/* Thêm Leader mới */}
+              <div className="border-t pt-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-3">Thêm Leader mới</h3>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={newLeaderEmail}
+                    onChange={(e) => setNewLeaderEmail(e.target.value)}
+                    placeholder="Nhập email sinh viên"
+                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handleAddLeader();
+                      }
+                    }}
+                  />
+                  <Button
+                    onClick={handleAddLeader}
+                    disabled={addingLeader || !newLeaderEmail.trim()}
+                    className="flex items-center gap-2"
+                  >
+                    {addingLeader ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Đang thêm...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-4 h-4" />
+                        Thêm Leader
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="flex justify-end pt-4 border-t">
                 <Button
                   variant="secondary"
-                  onClick={() => setShowLeaderModal(false)}
+                  onClick={() => {
+                    setShowLeaderModal(false);
+                    setLeaders([]);
+                    setNewLeaderEmail("");
+                  }}
                 >
                   Đóng
                 </Button>
