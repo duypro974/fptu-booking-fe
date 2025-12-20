@@ -163,6 +163,9 @@ export const api = {
 
   createClub: clubService.createClub,
   updateClub: clubService.updateClub,
+  getClubDetail: clubService.getClubDetail,
+  addClubLeader: clubService.addClubLeader,
+  removeClubLeader: clubService.removeClubLeader,
   deleteClub: clubService.deleteClub,
 
   // ========== MY BOOKINGS ==========
