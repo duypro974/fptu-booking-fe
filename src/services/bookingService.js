@@ -44,6 +44,10 @@ export const createBooking = async (payload) => {
   const res = await api.post("/bookings", payload);
   return res.data;
 };
+export const requestReschedule = (oldBookingId, payload) => {
+  // payload: { facilityId, date, slots, bookingTypeId, attendeeCount }
+  return api.post(`/bookings/${oldBookingId}/reschedule`, payload);
+};
 
 // POST /bookings - Tạo Booking (Đặt lẻ / Đặt CLB) - Wrapper với format cũ
 export const createBookingWithFormat = async (data) => {

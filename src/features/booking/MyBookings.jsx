@@ -1,12 +1,17 @@
 /* eslint-disable no-unused-vars */
 import { useEffect, useMemo, useState } from "react";
-import { X, Clock, Info, RefreshCw, Eye } from "lucide-react";
+import { X, Clock, Info, RefreshCw, Eye, CalendarClock } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import Badge from "../../components/ui/Badge";
 import Card from "../../components/ui/Card";
 import Button from "../../components/ui/Button";
-import { getMyBookings, cancelBooking, getBookingDetail } from "../../services/bookingService";
+import {
+  getMyBookings,
+  cancelBooking,
+  getBookingDetail,
+  requestReschedule,
+} from "../../services/bookingService";
 
 const normalizeStatus = (s) => String(s || "").toUpperCase();
 
@@ -26,65 +31,11 @@ const statusMeta = (status) => {
 
   if (st === "APPROVED") return { type: "success", label: "Thành công" };
   if (st === "REJECTED") return { type: "danger", label: "Bị từ chối" };
-  if (st === "CANCELLED" || st === "CANCELED") return { type: "secondary", label: "Đã hủy" };
+  if (st === "CANCELLED" || st === "CANCELED")
+    return { type: "secondary", label: "Đã hủy" };
   if (st === "PREEMPTED") return { type: "secondary", label: "Bị chiếm chỗ" };
   if (st === "COMPLETED") return { type: "success", label: "Hoàn tất" };
   return { type: "warning", label: "Chờ duyệt" };
-};
-
-/* =========================================================
-   ✅ FIX: TÓM TẮT TRẠNG THÁI CHO BOOKING ĐỊNH KÌ (isGroup)
-   - Vì item.status của group là PROCESSED_GROUP (không map)
-   - Status thật nằm trong item.bookings[].status
-========================================================= */
-const summarizeGroupStatus = (item) => {
-  // booking thường: dùng như cũ
-  if (!item?.isGroup || !Array.isArray(item?.bookings)) {
-    const st = normalizeStatus(item?.status);
-    const meta = statusMeta(st);
-    return { st, type: meta.type, label: statusToVi(st) };
-  }
-
-  const sts = item.bookings.map((b) => normalizeStatus(b?.status));
-  const total = sts.length;
-
-  // ✅ FIX: tránh trường hợp 0/0
-  if (total === 0) {
-    return { st: "PENDING", type: "warning", label: "Chờ duyệt" };
-  }
-
-  const count = (x) => sts.filter((s) => s === x).length;
-  const approved = count("APPROVED");
-  const pending = count("PENDING");
-  const rejected = count("REJECTED");
-  const cancelled = count("CANCELLED") + count("CANCELED");
-  const preempted = count("PREEMPTED");
-  const completed = count("COMPLETED");
-
-  const bad = rejected + cancelled + preempted;
-
-  // Tất cả approved
-  if (approved === total) {
-    return { st: "APPROVED", type: "success", label: `Đã duyệt (${total}/${total})` };
-  }
-
-  // Tất cả completed
-  if (completed === total) {
-    return { st: "COMPLETED", type: "success", label: "Hoàn tất" };
-  }
-
-  // Có vấn đề
-  if (bad > 0) {
-    return { st: "ISSUE", type: "danger", label: `Có vấn đề (${bad}/${total})` };
-  }
-
-  // Còn pending
-  if (pending > 0) {
-    return { st: "PENDING", type: "warning", label: `Chờ duyệt (${pending}/${total})` };
-  }
-
-  // Fallback
-  return { st: "PENDING", type: "warning", label: `Đang xử lý (${approved}/${total})` };
 };
 
 // ===== SLOT DEFINITIONS (CỨNG) =====
@@ -118,7 +69,6 @@ const formatDateTime = (value) => {
 const formatHHmm = (value) => {
   const d = toDateSafe(value);
   if (!d) return null;
-  // Đảm bảo format 24h (HH:MM) không có AM/PM
   const hours = String(d.getHours()).padStart(2, "0");
   const minutes = String(d.getMinutes()).padStart(2, "0");
   return `${hours}:${minutes}`;
@@ -129,66 +79,21 @@ const getSlotLabelFromTimes = (startTime, endTime) => {
   const e = formatHHmm(endTime);
   if (!s || !e) return "—";
 
-  // Tìm slot đơn lẻ trước (match chính xác start và end)
   const singleMatch = SLOT_DEFS.find((x) => x.start === s && x.end === e);
-  if (singleMatch) {
-    return `Slot ${singleMatch.id} (${singleMatch.start} - ${singleMatch.end})`;
-  }
+  if (singleMatch) return `Slot ${singleMatch.id} (${singleMatch.start} - ${singleMatch.end})`;
 
-  // Tìm slot bắt đầu từ startTime
   const startSlot = SLOT_DEFS.find((x) => x.start === s);
-
-  // Tìm slot kết thúc tại endTime
   const endSlot = SLOT_DEFS.find((x) => x.end === e);
 
-  // Nếu có cả startSlot và endSlot, và chúng liên tiếp
   if (startSlot && endSlot && startSlot.id <= endSlot.id) {
     const slotIds = [];
-    for (let i = startSlot.id; i <= endSlot.id; i++) {
-      slotIds.push(i);
-    }
-    if (slotIds.length > 1) {
-      return `Slot ${slotIds.join(", ")} (${s} - ${e})`;
-    } else if (slotIds.length === 1) {
-      return `Slot ${slotIds[0]} (${startSlot.start} - ${endSlot.end})`;
-    }
+    for (let i = startSlot.id; i <= endSlot.id; i++) slotIds.push(i);
+    if (slotIds.length > 1) return `Slot ${slotIds.join(", ")} (${s} - ${e})`;
+    if (slotIds.length === 1) return `Slot ${slotIds[0]} (${startSlot.start} - ${endSlot.end})`;
   }
 
-  // Nếu chỉ có startSlot (startTime match, nhưng endTime không match chính xác)
-  if (startSlot && !endSlot) {
-    const containingSlot = SLOT_DEFS.find((x) => {
-      const slotStart = x.start;
-      const slotEnd = x.end;
-      return slotStart <= e && e < slotEnd;
-    });
+  if (startSlot && !endSlot) return `Slot ${startSlot.id} (${startSlot.start} - ${startSlot.end})`;
 
-    if (containingSlot && containingSlot.id >= startSlot.id) {
-      const slotIds = [];
-      for (let i = startSlot.id; i <= containingSlot.id; i++) {
-        slotIds.push(i);
-      }
-      if (slotIds.length > 1) {
-        return `Slot ${slotIds.join(", ")} (${s} - ${containingSlot.end})`;
-      } else {
-        return `Slot ${startSlot.id} (${startSlot.start} - ${startSlot.end})`;
-      }
-    }
-
-    const nextSlot = SLOT_DEFS.find((x) => x.id > startSlot.id && x.end >= e);
-    if (nextSlot) {
-      const slotIds = [];
-      for (let i = startSlot.id; i <= nextSlot.id; i++) {
-        slotIds.push(i);
-      }
-      if (slotIds.length > 1) {
-        return `Slot ${slotIds.join(", ")} (${s} - ${nextSlot.end})`;
-      }
-    }
-
-    return `Slot ${startSlot.id} (${startSlot.start} - ${startSlot.end})`;
-  }
-
-  // Fallback: hiển thị thời gian
   return `${s} - ${e}`;
 };
 
@@ -205,10 +110,7 @@ const pickSlots = (item) => {
     const b0 = item.bookings[0];
     return getSlotLabelFromTimes(b0?.startTime, b0?.endTime);
   }
-
-  if (item?.startTime && item?.endTime) {
-    return getSlotLabelFromTimes(item.startTime, item.endTime);
-  }
+  if (item?.startTime && item?.endTime) return getSlotLabelFromTimes(item.startTime, item.endTime);
 
   const s = item?.slots ?? item?.slot;
   if (Array.isArray(s)) return s.join(", ");
@@ -219,7 +121,6 @@ const pickSlots = (item) => {
     const slots = item.bookingSlots.map((x) => x?.slot).filter(Boolean);
     if (slots.length) return slots.map((n) => `Slot ${n}`).join(", ");
   }
-
   return "—";
 };
 
@@ -235,10 +136,80 @@ const extractLogInfo = (data) => {
   const reason = terminalRow?.changeReason || fallbackReason || "";
 
   const occurredAt = terminalRow?.updatedAt || data?.updatedAt || data?.createdAt || null;
-
   const newStatus = terminalRow?.newStatus || data?.status || "";
 
   return { reason, occurredAt, newStatus };
+};
+
+/* =========================================================
+   ✅ FIX: TÓM TẮT TRẠNG THÁI CHO BOOKING ĐỊNH KÌ (isGroup)
+   - Nếu buổi bị CANCELLED/REJECTED/PREEMPTED nhưng đã có
+     booking reschedule (PENDING/APPROVED/COMPLETED) thay thế
+     => coi như đã được xử lý, KHÔNG tính vào "Có vấn đề".
+========================================================= */
+const summarizeGroupStatus = (item, rescheduleMap) => {
+  if (!item?.isGroup || !Array.isArray(item?.bookings)) {
+    const st = normalizeStatus(item?.status);
+    const meta = statusMeta(st);
+    return { st, type: meta.type, label: statusToVi(st) };
+  }
+
+  const total = item.bookings.length;
+  if (total === 0) return { st: "PENDING", type: "warning", label: "Chờ duyệt" };
+
+  // ✅ build derived statuses
+  const derivedStatuses = item.bookings.map((b) => {
+    const st = normalizeStatus(b?.status);
+
+    // nếu buổi này đã có reschedule thay thế => coi như đã xử lý
+    const replacement = rescheduleMap?.get?.(Number(b?.id));
+    if (replacement) {
+      const repSt = normalizeStatus(replacement?.status);
+      if (repSt === "PENDING") return "RESCHEDULE_PENDING";
+      if (repSt === "APPROVED" || repSt === "COMPLETED") return "RESCHEDULED_OK";
+      return "RESCHEDULED_OK";
+    }
+
+    return st;
+  });
+
+  const count = (x) => derivedStatuses.filter((s) => s === x).length;
+
+  const approved = count("APPROVED");
+  const pending = count("PENDING");
+
+  // "bad" chỉ tính những buổi lỗi mà CHƯA có replacement
+  const rejected = count("REJECTED");
+  const cancelled = count("CANCELLED") + count("CANCELED");
+  const preempted = count("PREEMPTED");
+  const bad = rejected + cancelled + preempted;
+
+  const completed = count("COMPLETED");
+  const resPending = count("RESCHEDULE_PENDING");
+  const resOk = count("RESCHEDULED_OK");
+
+  // ✅ Nếu tất cả buổi đều OK/Approved/Completed/Rescheduled OK => hiển thị success
+  if (approved + completed + resOk === total) {
+    return {
+      st: "APPROVED",
+      type: "success",
+      label: `Đã duyệt (${total}/${total})`,
+    };
+  }
+
+  // Nếu có bad thật sự
+  if (bad > 0) return { st: "ISSUE", type: "danger", label: `Có vấn đề (${bad}/${total})` };
+
+  // Nếu có pending thường hoặc pending đổi lịch
+  if (pending + resPending > 0) {
+    return {
+      st: "PENDING",
+      type: "warning",
+      label: `Chờ duyệt (${pending + resPending}/${total})`,
+    };
+  }
+
+  return { st: "PENDING", type: "warning", label: `Đang xử lý (${approved}/${total})` };
 };
 
 export default function MyBookings() {
@@ -248,7 +219,7 @@ export default function MyBookings() {
   const [error, setError] = useState("");
   const [cancellingId, setCancellingId] = useState(null);
 
-  // ✅ MODAL LOG (booking đơn hoặc booking con trong group)
+  // ✅ MODAL LOG
   const [logOpen, setLogOpen] = useState(false);
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState("");
@@ -257,6 +228,11 @@ export default function MyBookings() {
   // ✅ MODAL RECURRING DETAIL
   const [recurringDetailOpen, setRecurringDetailOpen] = useState(false);
   const [recurringDetailData, setRecurringDetailData] = useState(null);
+
+  // ✅ MODAL RESCHEDULE (chọn ngày + slot)
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [rescheduleTarget, setRescheduleTarget] = useState(null); // booking child
+  const [rescheduleGroup, setRescheduleGroup] = useState(null); // group data
 
   const fetchMyBookings = async () => {
     setLoading(true);
@@ -281,6 +257,39 @@ export default function MyBookings() {
   useEffect(() => {
     fetchMyBookings();
   }, []);
+
+  // ✅ Map: oldBookingId -> reschedule booking (PENDING/APPROVED/COMPLETED/...)
+  // Chỉ map những booking KHÔNG phải group (vì booking đổi lịch thường là booking đơn)
+  const rescheduleMap = useMemo(() => {
+    const map = new Map();
+    (bookings || []).forEach((b) => {
+      if (b?.isGroup) return;
+      const fromId = b?.rescheduleFromId ?? b?.rescheduleFromID ?? b?.reschedule_from_id;
+      if (!fromId) return;
+
+      // ưu tiên booking mới nhất/ưu tiên APPROVED hơn PENDING
+      const key = Number(fromId);
+      const existed = map.get(key);
+
+      if (!existed) {
+        map.set(key, b);
+        return;
+      }
+
+      const stNew = normalizeStatus(b?.status);
+      const stOld = normalizeStatus(existed?.status);
+
+      // Ưu tiên APPROVED/COMPLETED hơn PENDING
+      const score = (st) => {
+        if (st === "APPROVED" || st === "COMPLETED") return 3;
+        if (st === "PENDING") return 2;
+        return 1;
+      };
+
+      if (score(stNew) > score(stOld)) map.set(key, b);
+    });
+    return map;
+  }, [bookings]);
 
   const canCancelBooking = (booking) => {
     const status = normalizeStatus(booking?.status);
@@ -346,7 +355,6 @@ export default function MyBookings() {
   };
 
   // ✅ Chỉ mở log khi status là REJECTED/CANCELLED/PREEMPTED
-  // (dùng cho booking đơn, hoặc booking con trong group)
   const openLogModal = async (bookingLike) => {
     const st = normalizeStatus(bookingLike?.status);
     const allowed = ["REJECTED", "CANCELLED", "CANCELED", "PREEMPTED"];
@@ -380,13 +388,20 @@ export default function MyBookings() {
       <div className="flex items-end justify-between gap-3">
         <h1 className="text-2xl font-bold text-gray-800">Lịch sử đặt phòng</h1>
 
-        <Button variant="secondary" onClick={fetchMyBookings} disabled={loading} className="whitespace-nowrap">
+        <Button
+          variant="secondary"
+          onClick={fetchMyBookings}
+          disabled={loading}
+          className="whitespace-nowrap"
+        >
           {loading ? "Đang tải..." : "Tải lại"}
         </Button>
       </div>
 
       {error && (
-        <div className="p-4 rounded-xl bg-red-50 border border-red-100 text-sm text-red-700">{error}</div>
+        <div className="p-4 rounded-xl bg-red-50 border border-red-100 text-sm text-red-700">
+          {error}
+        </div>
       )}
 
       <Card className="overflow-hidden">
@@ -418,19 +433,18 @@ export default function MyBookings() {
                 </tr>
               ) : (
                 rows.map((item, idx) => {
-                  // ✅ FIX: dùng summary cho badge (định kì) + giữ status gốc cho action/log
-                  const sum = summarizeGroupStatus(item);
+                  const sum = summarizeGroupStatus(item, rescheduleMap);
 
                   const canCancel = canCancelBooking(item);
                   const timeUntil = getTimeUntilBooking(item);
 
-                  // status gốc (để không phá hành vi cũ: log/cancel theo API hiện tại)
                   const status = normalizeStatus(item?.status);
                   const isCancelled = status === "CANCELLED" || status === "CANCELED";
 
-                  // booking định kỳ
                   const isRecurring =
-                    item?.isGroup === true && Array.isArray(item?.bookings) && item.bookings.length > 1;
+                    item?.isGroup === true &&
+                    Array.isArray(item?.bookings) &&
+                    item.bookings.length > 1;
                   const recurringBookingCount = isRecurring ? item.bookings.length : 0;
 
                   const dateValue =
@@ -440,7 +454,6 @@ export default function MyBookings() {
                     item?.bookingDate ||
                     item?.createdAt;
 
-                  // Booking đơn mới có log theo dòng này (vì log là theo bookingId)
                   const showLogBtn =
                     !item?.isGroup &&
                     ["REJECTED", "CANCELLED", "CANCELED", "PREEMPTED"].includes(status);
@@ -453,7 +466,10 @@ export default function MyBookings() {
                       <td className="p-4 font-medium">
                         <div className="flex items-center gap-2">
                           {isRecurring && (
-                            <RefreshCw className="w-4 h-4 text-blue-600" title="Đặt phòng định kỳ" />
+                            <RefreshCw
+                              className="w-4 h-4 text-blue-600"
+                              title="Đặt phòng định kỳ"
+                            />
                           )}
                           <span>{pickFacilityName(item)}</span>
                         </div>
@@ -463,7 +479,9 @@ export default function MyBookings() {
                         {isRecurring ? (
                           <div className="flex flex-col gap-1">
                             <span>{formatDate(dateValue)}</span>
-                            <span className="text-xs text-blue-600 font-medium">{recurringBookingCount} buổi</span>
+                            <span className="text-xs text-blue-600 font-medium">
+                              {recurringBookingCount} buổi
+                            </span>
                           </div>
                         ) : (
                           formatDate(dateValue)
@@ -494,14 +512,12 @@ export default function MyBookings() {
                         )}
                       </td>
 
-                      {/* ✅ FIX: Badge dùng sum thay vì item.status */}
                       <td className="p-4 text-right">
                         <Badge type={sum.type}>{sum.label}</Badge>
                       </td>
 
                       <td className="p-4 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {/* Nút xem chi tiết cho booking định kỳ */}
                           {isRecurring && (
                             <Button
                               variant="secondary"
@@ -531,7 +547,6 @@ export default function MyBookings() {
                             </Button>
                           )}
 
-                          {/* Booking định kỳ không hủy tại đây */}
                           {!isRecurring && !isCancelled && canCancel && (
                             <Button
                               variant="danger"
@@ -566,9 +581,9 @@ export default function MyBookings() {
                           {isRecurring && (
                             <span
                               className="text-xs text-blue-600 italic"
-                              title="Để hủy đặt phòng định kỳ, vui lòng vào trang Đặt phòng định kỳ"
+                              title="Mở chi tiết để đổi lịch"
                             >
-                              Xem chi tiết để hủy
+                              Mở chi tiết để đổi lịch
                             </span>
                           )}
                         </div>
@@ -582,11 +597,19 @@ export default function MyBookings() {
         </div>
       </Card>
 
-      {logOpen && <BookingLogModal loading={logLoading} error={logError} data={logData} onClose={closeLogModal} />}
+      {logOpen && (
+        <BookingLogModal
+          loading={logLoading}
+          error={logError}
+          data={logData}
+          onClose={closeLogModal}
+        />
+      )}
 
       {recurringDetailOpen && recurringDetailData && (
         <RecurringDetailModal
           data={recurringDetailData}
+          rescheduleMap={rescheduleMap}
           onClose={() => {
             setRecurringDetailOpen(false);
             setRecurringDetailData(null);
@@ -596,20 +619,41 @@ export default function MyBookings() {
             setRecurringDetailData(null);
             navigate("/booking/recurring");
           }}
-          // ✅ NEW: pass handler để xem log từng buổi
           onOpenLog={(bookingChild) => openLogModal(bookingChild)}
+          onReschedule={(bookingChild) => {
+            setRescheduleTarget(bookingChild);
+            setRescheduleGroup(recurringDetailData);
+            setRescheduleOpen(true);
+          }}
+        />
+      )}
+
+      {rescheduleOpen && rescheduleTarget && (
+        <RescheduleModal
+          booking={rescheduleTarget}
+          groupData={rescheduleGroup}
+          onClose={() => {
+            setRescheduleOpen(false);
+            setRescheduleTarget(null);
+            setRescheduleGroup(null);
+          }}
+          onSuccess={async () => {
+            setRescheduleOpen(false);
+            setRescheduleTarget(null);
+            setRescheduleGroup(null);
+            await fetchMyBookings();
+          }}
         />
       )}
     </div>
   );
 }
 
-// ✅ Modal log màu ĐỎ + trạng thái tiếng Việt + chỉ show lý do + thời gian
+// ✅ Modal log
 function BookingLogModal({ loading, error, data, onClose }) {
   const { reason, occurredAt, newStatus } = extractLogInfo(data);
   const st = normalizeStatus(newStatus || data?.status);
 
-  // Chỉ hiển thị log cho các trạng thái "kết thúc"
   const allowed = ["REJECTED", "CANCELLED", "CANCELED", "PREEMPTED"];
   const canShow = allowed.includes(st);
 
@@ -632,7 +676,9 @@ function BookingLogModal({ loading, error, data, onClose }) {
           {loading ? (
             <div className="text-sm text-gray-500">Đang tải...</div>
           ) : error ? (
-            <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">{error}</div>
+            <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
+              {error}
+            </div>
           ) : !data ? (
             <div className="text-sm text-gray-500">Không có dữ liệu.</div>
           ) : !canShow ? (
@@ -644,7 +690,9 @@ function BookingLogModal({ loading, error, data, onClose }) {
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
                   <div className="text-gray-500">Phòng</div>
-                  <div className="font-semibold text-gray-900">{data?.facility?.name ?? "—"}</div>
+                  <div className="font-semibold text-gray-900">
+                    {data?.facility?.name ?? "—"}
+                  </div>
                 </div>
                 <div>
                   <div className="text-gray-500">Thời gian</div>
@@ -654,7 +702,6 @@ function BookingLogModal({ loading, error, data, onClose }) {
                 </div>
               </div>
 
-              {/* ✅ RED box */}
               <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-800">
                 <div className="font-semibold mb-1">Trạng thái</div>
                 <div className="mb-3">{statusToVi(st)}</div>
@@ -683,20 +730,22 @@ function BookingLogModal({ loading, error, data, onClose }) {
 }
 
 // ✅ Modal chi tiết booking định kỳ
-function RecurringDetailModal({ data, onClose, onViewFull, onOpenLog }) {
+function RecurringDetailModal({
+  data,
+  rescheduleMap,
+  onClose,
+  onViewFull,
+  onOpenLog,
+  onReschedule,
+}) {
   const bookings = Array.isArray(data?.bookings) ? data.bookings : [];
+  const sum = summarizeGroupStatus(data, rescheduleMap);
 
-  // ✅ FIX: badge tổng quan phải dùng summarizeGroupStatus (vì data.status = PROCESSED_GROUP)
-  const sum = summarizeGroupStatus(data);
-
-  // Group bookings theo tuần
   const bookingsByWeek = useMemo(() => {
     const grouped = {};
     bookings.forEach((booking, idx) => {
-      const week = booking?.week || Math.floor(idx / 7) + 1; // Fallback: tính tuần từ index
-      if (!grouped[week]) {
-        grouped[week] = [];
-      }
+      const week = booking?.week || Math.floor(idx / 7) + 1;
+      if (!grouped[week]) grouped[week] = [];
       grouped[week].push(booking);
     });
     return grouped;
@@ -711,20 +760,24 @@ function RecurringDetailModal({ data, onClose, onViewFull, onOpenLog }) {
           <div className="flex items-center gap-3">
             <RefreshCw className="w-6 h-6 text-blue-600" />
             <div>
-              <div className="text-lg font-bold text-gray-900">Chi tiết đặt phòng định kỳ</div>
+              <div className="text-lg font-bold text-gray-900">
+                Chi tiết đặt phòng định kỳ
+              </div>
               <div className="text-sm text-gray-600">
                 {pickFacilityName(data)} • {bookings.length} buổi
               </div>
             </div>
           </div>
-          <button onClick={onClose} className="bg-white hover:bg-gray-100 text-gray-700 p-2 rounded-full">
+          <button
+            onClick={onClose}
+            className="bg-white hover:bg-gray-100 text-gray-700 p-2 rounded-full"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <div className="p-5 overflow-y-auto flex-1">
           <div className="space-y-4">
-            {/* Thông tin tổng quan */}
             <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
@@ -733,11 +786,15 @@ function RecurringDetailModal({ data, onClose, onViewFull, onOpenLog }) {
                 </div>
                 <div>
                   <div className="text-gray-500 mb-1">Số buổi</div>
-                  <div className="font-semibold text-gray-900">{bookings.length} buổi</div>
+                  <div className="font-semibold text-gray-900">
+                    {bookings.length} buổi
+                  </div>
                 </div>
                 <div>
                   <div className="text-gray-500 mb-1">Phòng</div>
-                  <div className="font-semibold text-gray-900">{pickFacilityName(data)}</div>
+                  <div className="font-semibold text-gray-900">
+                    {pickFacilityName(data)}
+                  </div>
                 </div>
                 <div>
                   <div className="text-gray-500 mb-1">Slot</div>
@@ -746,16 +803,19 @@ function RecurringDetailModal({ data, onClose, onViewFull, onOpenLog }) {
               </div>
             </div>
 
-            {/* Danh sách bookings theo tuần */}
             <div>
               <h3 className="font-semibold text-gray-900 mb-3">Danh sách các buổi</h3>
+
               <div className="space-y-3 max-h-96 overflow-y-auto">
                 {Object.entries(bookingsByWeek).map(([week, weekBookings]) => (
                   <div key={week} className="border border-gray-200 rounded-lg p-4">
                     <div className="font-semibold text-gray-900 mb-2">Tuần {week}</div>
+
                     <div className="space-y-2">
                       {weekBookings.map((booking, idx) => {
-                        const bookingDate = booking?.startTime ? formatDate(booking.startTime) : "—";
+                        const bookingDate = booking?.startTime
+                          ? formatDate(booking.startTime)
+                          : "—";
                         const bookingSlot = pickSlots(booking);
                         const bookingStatus = normalizeStatus(booking?.status);
                         const bookingMeta = statusMeta(booking?.status);
@@ -764,14 +824,48 @@ function RecurringDetailModal({ data, onClose, onViewFull, onOpenLog }) {
                           bookingStatus
                         );
 
+                        // ✅ Check nếu buổi này đã có booking đổi lịch thay thế
+                        const replacement = rescheduleMap?.get?.(Number(booking?.id)) || null;
+                        const replacementStatus = normalizeStatus(replacement?.status);
+
+                        const hasReplacement = !!replacement;
+                        const replacementLabel =
+                          replacementStatus === "PENDING"
+                            ? "Đã gửi yêu cầu đổi lịch"
+                            : replacementStatus === "APPROVED" || replacementStatus === "COMPLETED"
+                              ? "Đã đổi lịch"
+                              : "Đã đổi lịch";
+
+                        // ✅ chỉ cho đổi lịch khi buổi lỗi VÀ CHƯA có replacement
+                        const canRescheduleChild =
+                          !hasReplacement &&
+                          ["CANCELLED", "CANCELED", "REJECTED", "PREEMPTED"].includes(bookingStatus);
+
                         return (
                           <div
                             key={booking?.id || idx}
                             className="flex items-center justify-between gap-3 p-2 bg-gray-50 rounded"
                           >
                             <div className="flex-1">
-                              <div className="text-sm font-medium text-gray-900">{bookingDate}</div>
+                              <div className="text-sm font-medium text-gray-900">
+                                {bookingDate}
+                              </div>
                               <div className="text-xs text-gray-600">{bookingSlot}</div>
+
+                              {/* ✅ Hiển thị thông tin buổi thay thế nếu có */}
+                              {hasReplacement && (
+                                <div className="mt-2 text-xs">
+                                  <div className="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-blue-50 border border-blue-100 text-blue-700">
+                                    <CalendarClock className="w-4 h-4" />
+                                    <span className="font-medium">{replacementLabel}</span>
+                                    <span className="text-blue-600/80">•</span>
+                                    <span>
+                                      {formatDate(replacement?.startTime)} •{" "}
+                                      {getSlotLabelFromTimes(replacement?.startTime, replacement?.endTime)}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
                             </div>
 
                             <div className="flex items-center gap-2">
@@ -779,7 +873,6 @@ function RecurringDetailModal({ data, onClose, onViewFull, onOpenLog }) {
                                 {bookingMeta.label}
                               </Badge>
 
-                              {/* ✅ NEW: Xem log từng buổi */}
                               {canShowLogForChild && (
                                 <Button
                                   variant="secondary"
@@ -792,6 +885,26 @@ function RecurringDetailModal({ data, onClose, onViewFull, onOpenLog }) {
                                   Xem lý do
                                 </Button>
                               )}
+
+                              {canRescheduleChild && (
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  className="whitespace-nowrap"
+                                  title="Đổi lịch (chọn ngày/slot khác)"
+                                  onClick={() => onReschedule?.(booking)}
+                                >
+                                  <CalendarClock className="w-4 h-4 mr-1" />
+                                  Đổi lịch
+                                </Button>
+                              )}
+
+                              {/* ✅ Nếu đã có replacement thì KHÔNG hiển thị nút đổi lịch nữa */}
+                              {hasReplacement && (
+                                <span className="text-xs text-blue-600 italic" title="Buổi này đã có lịch thay thế">
+                                  {replacementLabel}
+                                </span>
+                              )}
                             </div>
                           </div>
                         );
@@ -801,6 +914,7 @@ function RecurringDetailModal({ data, onClose, onViewFull, onOpenLog }) {
                 ))}
               </div>
             </div>
+
           </div>
         </div>
 
@@ -816,5 +930,173 @@ function RecurringDetailModal({ data, onClose, onViewFull, onOpenLog }) {
       </div>
     </div>,
     document.body
+  );
+}
+
+/** ✅ Modal chọn ngày + slot để gửi requestReschedule */
+function RescheduleModal({ booking, groupData, onClose, onSuccess }) {
+  const [date, setDate] = useState(() => {
+    const d = toDateSafe(booking?.startTime);
+    if (!d) return "";
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  });
+
+  const [slots, setSlots] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState("");
+
+  const toggleSlot = (id) => {
+    setSlots((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id].sort((a, b) => a - b)
+    );
+  };
+
+  const handleSubmit = async () => {
+    setErr("");
+
+    const oldBookingId = booking?.id;
+    if (!oldBookingId) return setErr("Thiếu booking id.");
+
+    const facilityId =
+      groupData?.facilityId ||
+      groupData?.facility?.id ||
+      booking?.facilityId ||
+      booking?.facility?.id;
+    if (!facilityId) return setErr("Không xác định được phòng (facilityId).");
+
+    if (!date) return setErr("Vui lòng chọn ngày.");
+    if (!slots.length) return setErr("Vui lòng chọn ít nhất 1 slot.");
+
+    const bookingTypeId =
+      booking?.bookingTypeId ||
+      booking?.bookingType?.id ||
+      groupData?.bookingTypeId ||
+      groupData?.bookingType?.id ||
+      1;
+
+    const attendeeCount = booking?.attendeeCount || groupData?.attendeeCount || 1;
+
+    const payload = {
+      facilityId: Number(facilityId),
+      date,
+      slots,
+      bookingTypeId: Number(bookingTypeId),
+      attendeeCount: Number(attendeeCount),
+    };
+
+    try {
+      setSubmitting(true);
+      await requestReschedule(oldBookingId, payload);
+      alert("Đã gửi yêu cầu đổi lịch (chờ duyệt).");
+      onSuccess?.();
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || "Gửi yêu cầu đổi lịch thất bại.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-gray-900/60" onClick={onClose} />
+      <div className="relative bg-white w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
+        <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+          <div className="text-lg font-bold text-gray-900">Đổi lịch buổi này</div>
+          <button
+            onClick={onClose}
+            className="bg-gray-100 hover:bg-gray-200 text-gray-700 p-2 rounded-full"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {err && (
+            <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
+              {err}
+            </div>
+          )}
+
+          <div className="text-sm text-gray-600">
+            Phòng:{" "}
+            <b className="text-gray-900">
+              {booking?.facility?.name ||
+                groupData?.facilityName ||
+                groupData?.facility?.name ||
+                facilityLabelFromAny(booking, groupData)}
+            </b>
+          </div>
+
+          <div className="text-sm text-gray-600">
+            Buổi cũ: <b className="text-gray-900">{formatDate(booking?.startTime)}</b> •{" "}
+            <b className="text-gray-900">
+              {getSlotLabelFromTimes(booking?.startTime, booking?.endTime)}
+            </b>
+          </div>
+
+          <div>
+            <div className="text-sm font-medium text-gray-700 mb-2">Chọn ngày mới</div>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="w-full border rounded-xl px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div>
+            <div className="text-sm font-medium text-gray-700 mb-2">Chọn slot mới</div>
+            <div className="grid grid-cols-2 gap-2">
+              {SLOT_DEFS.map((s) => (
+                <label
+                  key={s.id}
+                  className={`flex items-center gap-2 border rounded-xl px-3 py-2 text-sm cursor-pointer ${
+                    slots.includes(s.id) ? "bg-blue-50 border-blue-200" : "bg-white"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={slots.includes(s.id)}
+                    onChange={() => toggleSlot(s.id)}
+                  />
+                  <span>
+                    Slot {s.id} ({s.start} - {s.end})
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="text-xs text-gray-500">
+            Lưu ý: Đây là <b>yêu cầu đổi lịch</b> → tạo booking mới <b>PENDING</b> để admin duyệt.
+          </div>
+        </div>
+
+        <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>
+            Hủy
+          </Button>
+          <Button onClick={handleSubmit} disabled={submitting}>
+            {submitting ? "Đang gửi..." : "Gửi yêu cầu"}
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function facilityLabelFromAny(booking, groupData) {
+  return (
+    booking?.facilityName ||
+    booking?.facility?.name ||
+    booking?.facilityId ||
+    groupData?.facilityName ||
+    groupData?.facility?.name ||
+    groupData?.facilityId ||
+    "—"
   );
 }
