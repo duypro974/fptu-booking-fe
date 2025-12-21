@@ -269,3 +269,35 @@ export const rejectBookingWithReason = async (bookingId, reason) => {
   }
 };
 
+// ========== REPORTS APIs ==========
+// GET /reports - Danh sách báo cáo (Admin)
+export const getReports = async (params = {}) => {
+  try {
+    const queryParams = new URLSearchParams();
+    if (params.status) queryParams.append('status', params.status);
+    if (params.type) queryParams.append('type', params.type);
+    if (params.search) queryParams.append('search', params.search);
+    if (params.page) queryParams.append('page', params.page);
+    if (params.limit) queryParams.append('limit', params.limit);
+    
+    const queryString = queryParams.toString();
+    const endpoint = `/reports${queryString ? `?${queryString}` : ''}`;
+    const data = await apiRequest(endpoint);
+    return data;
+  } catch (error) {
+    console.error('[getReports] Error:', error);
+    throw error;
+  }
+};
+
+// GET /reports/{id} - Xem chi tiết báo cáo
+export const getReportDetail = async (reportId) => {
+  try {
+    const data = await apiRequest(`/reports/${reportId}`);
+    return data;
+  } catch (error) {
+    console.error('[getReportDetail] Error:', error);
+    throw error;
+  }
+};
+

@@ -10,6 +10,7 @@ import {
   Sparkles,
   Home,
   Repeat,
+  FileText,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "../../lib/utils";
@@ -50,6 +51,7 @@ export default function Sidebar({ isOpen }) {
     { icon: Shield, label: "Quản lý Phòng", path: "/admin-facility/rooms" },
     { icon: Package, label: "Quản lý Thiết bị", path: "/admin-facility/equipment" },
     { icon: Users, label: "Quản lý CLB", path: "/admin-facility/clubs" },
+    { icon: FileText, label: "Báo cáo", path: "/admin-facility/reports" },
     { icon: History, label: "Lịch sử", path: "/admin-facility/history" },
   ];
 
