@@ -92,13 +92,9 @@ export default function CheckInScanner() {
     setProcessingId(bookingId);
     try {
       await checkInBooking(bookingId);
-      await handleSearch(); // Reload danh sách sau khi check-in
+      await handleSearch();
     } catch (err) {
-      alert(
-        err?.response?.data?.message ||
-          err?.message ||
-          "Check-in thất bại."
-      );
+      alert(err?.response?.data?.message || err?.message || "Check-in thất bại.");
     } finally {
       setProcessingId(null);
     }
@@ -108,13 +104,9 @@ export default function CheckInScanner() {
     setProcessingId(bookingId);
     try {
       await checkOutBooking(bookingId);
-      await handleSearch(); // Reload danh sách sau khi check-out
+      await handleSearch();
     } catch (err) {
-      alert(
-        err?.response?.data?.message ||
-          err?.message ||
-          "Check-out thất bại."
-      );
+      alert(err?.response?.data?.message || err?.message || "Check-out thất bại.");
     } finally {
       setProcessingId(null);
     }
@@ -149,18 +141,13 @@ export default function CheckInScanner() {
   };
 
   const getStatusBadge = (booking) => {
-    // backend của bạn có isCheckedIn (boolean)
-    // nếu có thêm checkOutTime thì ưu tiên hiển thị check-out
     if (booking.checkOutTime) return { type: "secondary", label: "Đã Check-out" };
-    if (booking.isCheckedIn || booking.checkInTime)
-      return { type: "success", label: "Đã Check-in" };
+    if (booking.isCheckedIn || booking.checkInTime) return { type: "success", label: "Đã Check-in" };
     return { type: "warning", label: "Chưa Check-in" };
   };
 
-  // Load facilities when form is opened
   const loadFacilities = async () => {
     if (!user) return;
-    
     setLoadingFacilities(true);
     try {
       const campusId = user?.campusId || (user?.campus === "hcm" ? 2 : user?.campus === "hn" ? 1 : null);
@@ -175,7 +162,6 @@ export default function CheckInScanner() {
     }
   };
 
-  // Load facilities when form is opened
   const handleToggleReportForm = () => {
     const newShow = !showReportForm;
     setShowReportForm(newShow);
@@ -229,33 +215,25 @@ export default function CheckInScanner() {
     }
 
     try {
+      const imageUrls = reportData.imageUrls.filter((url) => url.trim() !== "");
       if (reportType === "facility") {
-        // Report theo phòng: POST /reports/facility/{facilityId}
         const payload = {
           title: reportData.title || "Facility Issue",
           category: reportData.category || "DAMAGE",
           description: reportData.description,
-          imageUrls: reportData.imageUrls.filter((url) => url.trim() !== ""),
+          imageUrls,
         };
-        
-        console.log("[CheckInScanner] Reporting facility issue:", {
-          facilityId: reportData.facilityId,
-          payload
-        });
-        
+        console.log("[CheckInScanner] Reporting facility issue:", { facilityId: reportData.facilityId, payload });
         await reportFacilityIssue(Number(reportData.facilityId), payload);
       } else {
-        // Report theo booking: POST /reports/booking
         const payload = {
           bookingId: Number(reportData.bookingId),
           title: reportData.title || "Booking Issue",
           category: reportData.category || "INCIDENT",
           description: reportData.description,
-          imageUrls: reportData.imageUrls.filter((url) => url.trim() !== ""),
+          imageUrls,
         };
-        
         console.log("[CheckInScanner] Reporting booking issue:", payload);
-        
         await reportBookingIssue(payload);
       }
 
@@ -351,10 +329,8 @@ export default function CheckInScanner() {
             {bookings.map((booking) => {
               const statusBadge = getStatusBadge(booking);
 
-              // theo swagger: isCheckedIn
               const canCheckIn = !booking.isCheckedIn && !booking.checkInTime;
-              const canCheckOut =
-                (booking.isCheckedIn || booking.checkInTime) && !booking.checkOutTime;
+              const canCheckOut = (booking.isCheckedIn || booking.checkInTime) && !booking.checkOutTime;
 
               return (
                 <div key={booking.id} className="p-4 hover:bg-gray-50 transition-colors">
@@ -409,11 +385,7 @@ export default function CheckInScanner() {
                       {booking.status && (
                         <div className="text-xs">
                           <Badge 
-                            type={
-                              booking.status === "APPROVED" ? "success" :
-                              booking.status === "PENDING" ? "warning" :
-                              booking.status === "REJECTED" ? "danger" : "info"
-                            }
+                            type={booking.status === "APPROVED" ? "success" : booking.status === "PENDING" ? "warning" : booking.status === "REJECTED" ? "danger" : "info"}
                             className="text-xs"
                           >
                             {booking.status}
@@ -558,11 +530,14 @@ export default function CheckInScanner() {
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none bg-white"
                   >
                     <option value="">-- Chọn phòng --</option>
-                    {facilities.map((facility) => (
-                      <option key={facility.id} value={facility.id}>
-                        {facility.name} {facility.type?.name ? `(${facility.type.name})` : facility.typeName ? `(${facility.typeName})` : ""}
-                      </option>
-                    ))}
+                    {facilities.map((facility) => {
+                      const typeName = facility.type?.name || facility.typeName;
+                      return (
+                        <option key={facility.id} value={facility.id}>
+                          {facility.name}{typeName ? ` (${typeName})` : ""}
+                        </option>
+                      );
+                    })}
                   </select>
                 )}
                 {facilities.length === 0 && !loadingFacilities && (
