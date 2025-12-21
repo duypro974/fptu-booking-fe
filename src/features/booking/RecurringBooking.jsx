@@ -194,6 +194,11 @@ export default function RecurringBooking() {
       console.log("[RecurringBooking] Scanning availability:", payload);
       const results = await scanRecurringAvailability(payload);
       console.log("[RecurringBooking] Scan results:", results);
+      // Log first result with CONFLICT_RESOLVED status for debugging
+      const conflictResult = results?.find(r => r.status === "CONFLICT_RESOLVED" || r.status === "CONFLICT");
+      if (conflictResult) {
+        console.log("[RecurringBooking] CONFLICT_RESOLVED result structure:", JSON.stringify(conflictResult, null, 2));
+      }
 
       const now = new Date();
       // Filter out slots that are in the past or currently happening
@@ -278,6 +283,17 @@ export default function RecurringBooking() {
           const weekDate = new Date(startDateObj);
           weekDate.setDate(startDateObj.getDate() + (week - 1) * 7);
 
+          // Determine facility ID: use alternative facility if CONFLICT_RESOLVED, otherwise use original
+          const targetFacilityId = 
+            (result.status === "CONFLICT_RESOLVED" || result.status === "CONFLICT") && result.facilityId
+              ? Number(result.facilityId)
+              : Number(facilityId);
+          
+          // Log for debugging
+          if (result.status === "CONFLICT_RESOLVED" || result.status === "CONFLICT") {
+            console.log(`[RecurringBooking] Week ${week} - Using facility ID: ${targetFacilityId} (original: ${facilityId}, result.facilityId: ${result.facilityId})`);
+          }
+
           // Build time slots for this week
           const slotBookings = selectedSlots.map((slotId) => {
             const slot = DEFAULT_SLOTS.find((s) => s.id === slotId);
@@ -298,11 +314,8 @@ export default function RecurringBooking() {
               return null;
             }
 
-            // Use original facilityId for all bookings
-            // Backend will handle alternative facilities for CONFLICT_RESOLVED status
-            // The scan result's facilityName is just for display
             return {
-              facilityId: Number(facilityId), // Always use the original selected facility
+              facilityId: targetFacilityId, // Use alternative facility for CONFLICT_RESOLVED, original otherwise
               bookingTypeId: 1, // Normal booking
               startTime: startDateTime.toISOString(),
               endTime: endDateTime.toISOString(),
@@ -345,6 +358,18 @@ export default function RecurringBooking() {
       };
 
       console.log("[RecurringBooking] Creating recurring booking:", payload);
+      console.log("[RecurringBooking] Bookings detail:", bookings.map((b, idx) => ({
+        index: idx,
+        facilityId: b.facilityId,
+        startTime: b.startTime,
+        endTime: b.endTime,
+      })));
+      // Group bookings by facility ID to see if there's a mix
+      const facilityIdGroups = bookings.reduce((acc, b) => {
+        acc[b.facilityId] = (acc[b.facilityId] || 0) + 1;
+        return acc;
+      }, {});
+      console.log("[RecurringBooking] Facility ID distribution:", facilityIdGroups);
       const result = await createRecurringBooking(payload);
       console.log("[RecurringBooking] Booking created:", result);
 
@@ -356,9 +381,51 @@ export default function RecurringBooking() {
       setStep("success");
     } catch (err) {
       console.error("[RecurringBooking] Create error:", err);
-      setCreateError(
-        err.message || "Không thể tạo đặt phòng định kỳ. Vui lòng thử lại."
-      );
+      
+      // Parse error message from backend
+      let errorMessage = "Không thể tạo đặt phòng định kỳ. Vui lòng thử lại.";
+      
+      if (err.response?.data) {
+        const errorData = err.response.data;
+        
+        // Check if it's a conflict error (400 Bad Request)
+        if (err.response.status === 400) {
+          // Try to extract conflict message from various possible formats
+          const message = errorData.message || errorData.error || errorData.msg || "";
+          const messageLower = message.toLowerCase();
+          
+          // Check for conflict-related keywords
+          if (
+            messageLower.includes("conflict") ||
+            messageLower.includes("xung đột") ||
+            messageLower.includes("trùng") ||
+            messageLower.includes("đã có lịch") ||
+            messageLower.includes("already booked") ||
+            messageLower.includes("occupied") ||
+            messageLower.includes("không thể đặt") ||
+            messageLower.includes("schedule conflict")
+          ) {
+            errorMessage = `❌ Không thể đặt phòng do bị trùng lịch!\n\n` +
+              `${message || "Bạn đã có booking khác vào cùng thời gian này. "}` +
+              `\n\nVui lòng kiểm tra lại lịch đặt phòng của bạn hoặc chọn thời gian khác.`;
+          } else if (message) {
+            // Other 400 errors with specific message
+            errorMessage = message;
+          } else {
+            errorMessage = "Dữ liệu đặt phòng không hợp lệ. Vui lòng kiểm tra lại thông tin.";
+          }
+        } else if (err.response.status === 403) {
+          errorMessage = "Bạn không có quyền thực hiện thao tác này.";
+        } else if (err.response.status === 500) {
+          errorMessage = "Lỗi hệ thống. Vui lòng thử lại sau.";
+        } else if (errorData.message || errorData.error || errorData.msg) {
+          errorMessage = errorData.message || errorData.error || errorData.msg;
+        }
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      setCreateError(errorMessage);
     } finally {
       setCreating(false);
     }
@@ -729,7 +796,7 @@ export default function RecurringBooking() {
               {createError && (
                 <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-start gap-2">
                   <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-sm">{createError}</p>
+                  <p className="text-sm whitespace-pre-line">{createError}</p>
                 </div>
               )}
 

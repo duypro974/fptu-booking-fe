@@ -205,6 +205,9 @@ export const createRecurringBooking = async (payload) => {
         bookingsCount: payload.bookings?.length || 0
       }
     });
+    if (error.response?.data) {
+      console.error('[createRecurringBooking] Error response data:', JSON.stringify(error.response.data, null, 2));
+    }
     throw error;
   }
 };
