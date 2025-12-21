@@ -325,28 +325,134 @@ const [pendingConflicts, setPendingConflicts] = useState([]);
   setError("");
 
   try {
+    console.log("[BookingActionModal] handleCreate - Checking conflicts with:", {
+      facilityId: data.facilityId,
+      startTime: data.startTime,
+      endTime: data.endTime
+    });
+    
     const conflicts = await checkConflicts(
       data.facilityId,
       data.startTime,
       data.endTime
     );
 
+    console.log("[BookingActionModal] handleCreate - Raw conflicts from API:", conflicts);
+    console.log("[BookingActionModal] handleCreate - Conflicts type:", Array.isArray(conflicts) ? 'array' : typeof conflicts);
+    console.log("[BookingActionModal] handleCreate - Conflicts length:", Array.isArray(conflicts) ? conflicts.length : 'N/A');
+
     const facilityIdNum = Number(data.facilityId);
+    console.log("[BookingActionModal] handleCreate - Facility ID number:", facilityIdNum);
 
     const blocking = (Array.isArray(conflicts) ? conflicts : []).filter((c) => {
-      const fId = Number(getFacilityIdFromConflict(c));
-      const status = getStatusUpper(c);
-      return (
-        fId === facilityIdNum &&
-        (status === "APPROVED" || status === "PENDING")
-      );
+      // Với conflict structure {booking1, booking2, facility, conflictType}
+      // Cần kiểm tra cả booking1 và booking2 có conflict với facilityId đang đặt không
+      const booking1 = c?.booking1;
+      const booking2 = c?.booking2;
+      const conflictFacilityId = c?.facility?.id || c?.facilityId;
+      
+      // Lấy facilityId từ booking1 và booking2
+      const booking1FacilityId = booking1?.facilityId || booking1?.facility?.id;
+      const booking2FacilityId = booking2?.facilityId || booking2?.facility?.id;
+      
+      // Kiểm tra xem có booking nào conflict với facility đang đặt không
+      const booking1Matches = booking1FacilityId && Number(booking1FacilityId) === facilityIdNum;
+      const booking2Matches = booking2FacilityId && Number(booking2FacilityId) === facilityIdNum;
+      const facilityMatches = conflictFacilityId && Number(conflictFacilityId) === facilityIdNum;
+      
+      const hasMatchingFacility = booking1Matches || booking2Matches || facilityMatches;
+      
+      // Lấy status từ booking1 hoặc booking2 (ưu tiên booking có facilityId match)
+      let status = null;
+      if (booking1Matches && booking1?.status) {
+        status = String(booking1.status).toUpperCase();
+      } else if (booking2Matches && booking2?.status) {
+        status = String(booking2.status).toUpperCase();
+      } else {
+        status = booking1?.status ? String(booking1.status).toUpperCase() : 
+                booking2?.status ? String(booking2.status).toUpperCase() : 
+                getStatusUpper(c);
+      }
+      
+      const statusMatches = status === "APPROVED" || status === "PENDING";
+      const matches = hasMatchingFacility && statusMatches;
+      
+      // Log chi tiết từng conflict để debug
+      console.log("[BookingActionModal] handleCreate - Checking conflict:", {
+        conflict: c,
+        booking1FacilityId,
+        booking2FacilityId,
+        conflictFacilityId,
+        expectedFacilityId: facilityIdNum,
+        booking1Status: booking1?.status,
+        booking2Status: booking2?.status,
+        extractedStatus: status,
+        booking1Matches,
+        booking2Matches,
+        facilityMatches,
+        hasMatchingFacility,
+        statusMatches,
+        matches,
+        fullKeys: Object.keys(c || {})
+      });
+      
+      if (!matches) {
+        console.log("[BookingActionModal] handleCreate - ⚠️ Conflict filtered out:", {
+          reason: !hasMatchingFacility ? `No matching facility ID (trying to book ${facilityIdNum})` : 
+                  `Status not APPROVED/PENDING: ${status}`,
+          hasMatchingFacility,
+          statusMatches,
+          status
+        });
+      }
+      
+      return matches;
     });
 
+    // Log conflicts để debug
+    console.log("[BookingActionModal] handleCreate - Blocking conflicts after filter:", blocking);
+    console.log("[BookingActionModal] handleCreate - Blocking conflicts count:", blocking.length);
+    
     // ⭐ NEW: nếu có conflict → MỞ MODAL XÁC NHẬN TRƯỚC
     if (blocking.length > 0) {
-      setPendingConflicts(blocking);        // ⭐ NEW
+      console.log("[BookingActionModal] handleCreate - First blocking conflict structure:", blocking[0]);
+      console.log("[BookingActionModal] handleCreate - First blocking conflict keys:", Object.keys(blocking[0] || {}));
+      
+      // Nếu conflict thiếu thông tin, thử fetch booking detail để enrich data
+      const enrichedConflicts = await Promise.all(blocking.map(async (conflict) => {
+        const bookingId = getBookingIdFromConflict(conflict);
+        const hasUserName = getUserNameFromConflict(conflict) && getUserNameFromConflict(conflict) !== "N/A";
+        const hasTime = formatTime(conflict) && formatTime(conflict) !== "N/A";
+        
+        // Nếu thiếu thông tin và có booking ID hợp lệ, fetch thêm
+        if (bookingId && bookingId !== "unknown" && bookingId !== null && (!hasUserName || !hasTime)) {
+          try {
+            const numericId = Number(bookingId);
+            if (!isNaN(numericId) && numericId > 0) {
+              console.log("[BookingActionModal] Enriching conflict data - Fetching booking detail for ID:", numericId);
+              const bookingDetail = await api.getBookingDetail(numericId);
+              
+              // Merge thông tin từ booking detail
+              return {
+                ...conflict,
+                ...bookingDetail,
+                userName: bookingDetail?.user?.fullName || bookingDetail?.user?.name || getUserNameFromConflict(conflict) || "N/A",
+                startTime: bookingDetail?.startTime || conflict?.startTime || conflict?.bookingStartTime,
+                endTime: bookingDetail?.endTime || conflict?.endTime || conflict?.bookingEndTime,
+                facility: bookingDetail?.facility || conflict?.facility,
+              };
+            }
+          } catch (fetchError) {
+            console.warn("[BookingActionModal] Failed to fetch booking detail for ID", bookingId, ":", fetchError);
+            return conflict;
+          }
+        }
+        return conflict;
+      }));
+      
+      setPendingConflicts(enrichedConflicts);
       setPreparedBookingData(data);
-      setConfirmOverrideOpen(true);         // ⭐ NEW
+      setConfirmOverrideOpen(true);
       return;
     }
 
@@ -361,7 +467,67 @@ const [pendingConflicts, setPendingConflicts] = useState([]);
 };
 
 
-  // ✅ Override: only call createBooking (BE will cancel both approved+pending)
+  // Helper: Lấy booking ID từ conflict - xử lý nhiều trường hợp
+  const getBookingIdFromConflict = (conflict, targetFacilityId = null) => {
+    if (!conflict) return null;
+    
+    // Với conflict structure {booking1, booking2, facility, conflictType}
+    // Ưu tiên lấy booking ID từ booking có facilityId match với targetFacilityId
+    
+    if (targetFacilityId) {
+      const booking1 = conflict?.booking1;
+      const booking2 = conflict?.booking2;
+      
+      // Kiểm tra booking1 có facilityId match không
+      const booking1FacilityId = booking1?.facilityId || booking1?.facility?.id;
+      if (booking1FacilityId && Number(booking1FacilityId) === Number(targetFacilityId)) {
+        if (booking1?.id && booking1.id !== "unknown") {
+          console.log("[getBookingIdFromConflict] Found booking ID from booking1:", booking1.id);
+          return booking1.id;
+        }
+      }
+      
+      // Kiểm tra booking2 có facilityId match không
+      const booking2FacilityId = booking2?.facilityId || booking2?.facility?.id;
+      if (booking2FacilityId && Number(booking2FacilityId) === Number(targetFacilityId)) {
+        if (booking2?.id && booking2.id !== "unknown") {
+          console.log("[getBookingIdFromConflict] Found booking ID from booking2:", booking2.id);
+          return booking2.id;
+        }
+      }
+    }
+    
+    // Fallback: Thử nhiều cách để lấy booking ID
+    const booking = pickBookingFromConflict(conflict);
+    
+    // Ưu tiên: booking.id
+    if (booking?.id && booking.id !== "unknown") {
+      return booking.id;
+    }
+    
+    // Thử conflict.id (nếu conflict là booking object)
+    if (conflict?.id && conflict.id !== "unknown") {
+      return conflict.id;
+    }
+    
+    // Thử conflict.bookingId
+    if (conflict?.bookingId) {
+      return conflict.bookingId;
+    }
+    
+    // Thử từ booking1 hoặc booking2 (lấy cái nào có ID hợp lệ)
+    if (conflict?.booking1?.id && conflict.booking1.id !== "unknown") {
+      return conflict.booking1.id;
+    }
+    if (conflict?.booking2?.id && conflict.booking2.id !== "unknown") {
+      return conflict.booking2.id;
+    }
+    
+    console.warn("[getBookingIdFromConflict] ⚠️ Cannot extract booking ID from conflict:", conflict);
+    return null;
+  };
+
+  // ✅ Override: Cancel các booking trùng lịch trước, sau đó tạo booking mới
   const handleOverride = async () => {
     if (loading || inFlightRef.current) return;
 
@@ -376,19 +542,71 @@ const [pendingConflicts, setPendingConflicts] = useState([]);
       return;
     }
 
-    // NOTE: reason currently is FE-only (BE create endpoint doesn't accept reason in your code)
-    // If you later add reason to BE, you can include it into payload.
+    // Lấy danh sách conflicts (từ conflictData hoặc pendingConflicts)
+    const conflictsToCancel = conflictData || pendingConflicts || [];
+    if (conflictsToCancel.length === 0) {
+      // Nếu không có conflict, tạo booking bình thường
+      return createBooking(data, false);
+    }
 
     inFlightRef.current = true;
     setLoading(true);
     setError("");
 
     try {
-      // Truyền flag isOverride = true để backend biết đây là đặt đè
-      await createBooking(data, true);
+      // Bước 1: Cancel tất cả các booking trùng lịch
+      console.log("[BookingActionModal] ⚠️ OVERRIDE: Cancelling", conflictsToCancel.length, "conflicting bookings...");
+      
+      const cancelPromises = conflictsToCancel.map(async (conflict) => {
+        // Truyền facilityId đang đặt để lấy đúng booking ID
+        const bookingId = getBookingIdFromConflict(conflict, data.facilityId);
+        if (!bookingId) {
+          console.warn("[BookingActionModal] ⚠️ Cannot get booking ID from conflict:", conflict);
+          // Log toàn bộ structure để debug
+          console.warn("[BookingActionModal] Conflict keys:", Object.keys(conflict || {}));
+          console.warn("[BookingActionModal] Booking1:", conflict?.booking1);
+          console.warn("[BookingActionModal] Booking2:", conflict?.booking2);
+          console.warn("[BookingActionModal] Facility:", conflict?.facility);
+          return null;
+        }
+        
+        // Validate booking ID là số hợp lệ
+        const numericId = Number(bookingId);
+        if (isNaN(numericId) || numericId <= 0) {
+          console.warn("[BookingActionModal] ⚠️ Invalid booking ID:", bookingId);
+          return null;
+        }
+        
+        try {
+          console.log("[BookingActionModal] Cancelling booking ID:", numericId, "with reason:", overrideReason.trim());
+          await api.cancelByAdmin(numericId, overrideReason.trim());
+          console.log("[BookingActionModal] ✅ Successfully cancelled booking:", numericId);
+          return numericId;
+        } catch (cancelError) {
+          console.error("[BookingActionModal] ❌ Failed to cancel booking", numericId, ":", cancelError);
+          console.error("[BookingActionModal] Cancel error details:", {
+            message: cancelError.message,
+            response: cancelError.response?.data
+          });
+          // Tiếp tục với các booking khác nếu một cái fail
+          return null;
+        }
+      });
+
+      const cancelledIds = await Promise.all(cancelPromises);
+      const successCount = cancelledIds.filter(id => id !== null).length;
+      console.log("[BookingActionModal] ✅ Successfully cancelled", successCount, "/", conflictsToCancel.length, "bookings");
+
+      // Bước 2: Đợi một chút để backend xử lý xong việc cancel
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Bước 3: Tạo booking mới (không cần force vì đã cancel hết conflicts rồi)
+      console.log("[BookingActionModal] ⚠️ OVERRIDE: Creating new booking...");
+      await createBooking(data, false);
     } catch (e) {
       console.error("[BookingActionModal] Error during override:", e);
-      setError(e.message || "Lỗi khi ghi đè lịch đặt phòng");
+      const errorMsg = e.message || "Lỗi khi ghi đè lịch đặt phòng";
+      setError(errorMsg);
     } finally {
       setLoading(false);
       inFlightRef.current = false;
@@ -420,8 +638,13 @@ const [pendingConflicts, setPendingConflicts] = useState([]);
         if (overrideReason?.trim()) {
           bookingPayload.overrideReason = overrideReason.trim();
         }
+        console.log("[BookingActionModal] ⚠️ OVERRIDE MODE - Payload:", {
+          ...bookingPayload,
+          overrideReason: overrideReason?.trim() || "(empty)"
+        });
       }
       
+      console.log("[BookingActionModal] Creating booking with payload:", bookingPayload);
       const result = await api.createBooking(bookingPayload);
 
       handleClose();
@@ -438,7 +661,29 @@ const [pendingConflicts, setPendingConflicts] = useState([]);
 
       const errorMessage = e.message || "Lỗi khi tạo đơn đặt phòng";
 
-      // If backend still returns a conflict-like message, show override overlay anyway
+      // ⚠️ Nếu đang override mà vẫn bị lỗi conflict, có thể backend chưa hỗ trợ force
+      if (isOverride) {
+        const msgLower = errorMessage.toLowerCase();
+        const isConflictError =
+          errorMessage.includes("đã có lịch") ||
+          errorMessage.includes("conflict") ||
+          errorMessage.includes("xung đột") ||
+          errorMessage.includes("không thể đặt phòng") ||
+          errorMessage.includes("Trạng thái:") ||
+          msgLower.includes("already") ||
+          msgLower.includes("exist") ||
+          msgLower.includes("schedule");
+
+        if (isConflictError) {
+          setError(
+            `Backend chưa hỗ trợ đặt đè. Lỗi: ${errorMessage}\n\n` +
+            `Gợi ý: Vui lòng hủy các booking trùng lịch trước, sau đó tạo booking mới.`
+          );
+          return;
+        }
+      }
+
+      // Nếu không phải override, fallback như cũ
       const msgLower = errorMessage.toLowerCase();
       const isConflictError =
         errorMessage.includes("đã có lịch") ||
@@ -450,18 +695,127 @@ const [pendingConflicts, setPendingConflicts] = useState([]);
         msgLower.includes("exist") ||
         msgLower.includes("schedule");
 
-      if (isConflictError) {
-        // fallback: show overlay with a fake item
-        setError("");
-        setConflictData([
-          {
-            id: "unknown",
-            status: "PENDING",
-            message: errorMessage,
-          },
-        ]);
-        setPreparedBookingData(bookingInfo);
-        return;
+      if (isConflictError && !isOverride) {
+        // Thay vì tạo fake conflict, gọi lại API để lấy conflict data đầy đủ
+        try {
+          console.log("[BookingActionModal] Conflict error detected, fetching full conflict data...");
+          const conflicts = await checkConflicts(
+            bookingInfo.facilityId,
+            bookingInfo.startTime,
+            bookingInfo.endTime
+          );
+          
+          const facilityIdNum = Number(bookingInfo.facilityId);
+          const blocking = (Array.isArray(conflicts) ? conflicts : []).filter((c) => {
+            // Với conflict structure {booking1, booking2, facility, conflictType}
+            // Cần kiểm tra cả booking1 và booking2 có conflict với facilityId đang đặt không
+            const booking1 = c?.booking1;
+            const booking2 = c?.booking2;
+            const conflictFacilityId = c?.facility?.id || c?.facilityId;
+            
+            // Lấy facilityId từ booking1 và booking2
+            const booking1FacilityId = booking1?.facilityId || booking1?.facility?.id;
+            const booking2FacilityId = booking2?.facilityId || booking2?.facility?.id;
+            
+            // Kiểm tra xem có booking nào conflict với facility đang đặt không
+            const booking1Matches = booking1FacilityId && Number(booking1FacilityId) === facilityIdNum;
+            const booking2Matches = booking2FacilityId && Number(booking2FacilityId) === facilityIdNum;
+            const facilityMatches = conflictFacilityId && Number(conflictFacilityId) === facilityIdNum;
+            
+            const hasMatchingFacility = booking1Matches || booking2Matches || facilityMatches;
+            
+            // Lấy status từ booking1 hoặc booking2 (ưu tiên booking có facilityId match)
+            let status = null;
+            if (booking1Matches && booking1?.status) {
+              status = String(booking1.status).toUpperCase();
+            } else if (booking2Matches && booking2?.status) {
+              status = String(booking2.status).toUpperCase();
+            } else {
+              status = booking1?.status ? String(booking1.status).toUpperCase() : 
+                      booking2?.status ? String(booking2.status).toUpperCase() : 
+                      getStatusUpper(c);
+            }
+            
+            const statusMatches = status === "APPROVED" || status === "PENDING";
+            
+            const matches = hasMatchingFacility && statusMatches;
+            
+            // Log để debug
+            console.log("[BookingActionModal] Error handler - Checking conflict:", {
+              conflict: c,
+              booking1FacilityId,
+              booking2FacilityId,
+              conflictFacilityId,
+              expectedFacilityId: facilityIdNum,
+              booking1Status: booking1?.status,
+              booking2Status: booking2?.status,
+              extractedStatus: status,
+              booking1Matches,
+              booking2Matches,
+              facilityMatches,
+              hasMatchingFacility,
+              statusMatches,
+              matches
+            });
+            
+            if (!matches) {
+              console.log("[BookingActionModal] Error handler - Conflict filtered out:", {
+                reason: !hasMatchingFacility ? "No matching facility ID" : "Status not APPROVED/PENDING",
+                hasMatchingFacility,
+                statusMatches
+              });
+            }
+            
+            return matches;
+          });
+          
+          console.log("[BookingActionModal] Fetched conflicts from API:", conflicts);
+          console.log("[BookingActionModal] Filtered blocking conflicts:", blocking);
+          
+          if (blocking.length > 0) {
+            // Enrich conflict data nếu thiếu thông tin
+            const enrichedConflicts = await Promise.all(blocking.map(async (conflict) => {
+              const bookingId = getBookingIdFromConflict(conflict);
+              const hasUserName = getUserNameFromConflict(conflict) && getUserNameFromConflict(conflict) !== "N/A";
+              const hasTime = formatTime(conflict) && formatTime(conflict) !== "N/A";
+              
+              if (bookingId && bookingId !== "unknown" && bookingId !== null && (!hasUserName || !hasTime)) {
+                try {
+                  const numericId = Number(bookingId);
+                  if (!isNaN(numericId) && numericId > 0) {
+                    console.log("[BookingActionModal] Enriching conflict - Fetching booking detail for ID:", numericId);
+                    const bookingDetail = await api.getBookingDetail(numericId);
+                    return {
+                      ...conflict,
+                      ...bookingDetail,
+                      userName: bookingDetail?.user?.fullName || bookingDetail?.user?.name || getUserNameFromConflict(conflict) || "N/A",
+                      startTime: bookingDetail?.startTime || conflict?.startTime || conflict?.bookingStartTime,
+                      endTime: bookingDetail?.endTime || conflict?.endTime || conflict?.bookingEndTime,
+                      facility: bookingDetail?.facility || conflict?.facility,
+                    };
+                  }
+                } catch (fetchError) {
+                  console.warn("[BookingActionModal] Failed to fetch booking detail:", fetchError);
+                }
+              }
+              return conflict;
+            }));
+            
+            // Có conflict data đầy đủ từ API - mở modal override
+            setError("");
+            setConflictData(enrichedConflicts);
+            setPreparedBookingData(bookingInfo);
+            return;
+          } else {
+            // Không tìm thấy conflict từ API, nhưng backend báo conflict
+            // Có thể conflict đã được resolve hoặc API không trả về đúng
+            console.warn("[BookingActionModal] Backend reports conflict but API checkConflicts returned empty");
+            setError(`Không thể đặt phòng: ${errorMessage}\n\nVui lòng thử lại sau vài giây hoặc kiểm tra lịch đặt phòng.`);
+          }
+        } catch (conflictFetchError) {
+          console.error("[BookingActionModal] Error fetching conflicts:", conflictFetchError);
+          setError(`Không thể đặt phòng: ${errorMessage}\n\nLỗi khi kiểm tra xung đột. Vui lòng thử lại.`);
+        }
       }
 
       if (errorMessage.includes("403") || errorMessage.includes("Forbidden") || errorMessage.includes("không có quyền")) {
@@ -520,8 +874,9 @@ if (confirmOverrideOpen) {
           <Button
             variant="danger"
             onClick={() => {
-              setConfirmOverrideOpen(false);      // ⭐ NEW
-              setConflictData(pendingConflicts); // ⭐ NEW → mở modal ghi đè cũ
+              setConfirmOverrideOpen(false);           // Đóng modal xác nhận
+              setConflictData(pendingConflicts);       // Set conflicts để hiển thị trong modal override
+              setPreparedBookingData(preparedBookingData || bookingData); // Đảm bảo có data
             }}
           >
             Xác nhận đặt đè
@@ -582,26 +937,45 @@ if (confirmOverrideOpen) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {conflictData.map((conflict) => {
+                      {conflictData.map((conflict, idx) => {
                         const booking = pickBookingFromConflict(conflict);
                         const userName = getUserNameFromConflict(conflict);
                         const statusUpper = getStatusUpper(conflict);
                         const badge = getBadgeMeta(statusUpper);
 
+                        // Lấy thông tin thời gian từ nhiều nguồn
                         const conflictForTime = {
                           ...conflict,
                           ...booking,
-                          startTime: booking?.startTime || conflict?.startTime,
-                          endTime: booking?.endTime || conflict?.endTime,
+                          startTime: booking?.startTime || conflict?.startTime || conflict?.bookingStartTime,
+                          endTime: booking?.endTime || conflict?.endTime || conflict?.bookingEndTime,
                           date: booking?.date || conflict?.date,
                         };
 
-                        const key = conflict?.id || booking?.id || `${userName}-${statusUpper}-${Math.random()}`;
+                        const formattedTime = formatTime(conflictForTime);
+                        const displayName = userName && userName !== "N/A" ? userName : (conflict?.message || "Không xác định");
+                        const displayTime = formattedTime && formattedTime !== "N/A" ? formattedTime : "Không xác định";
+
+                        const key = conflict?.id || booking?.id || `${userName}-${statusUpper}-${idx}`;
 
                         return (
                           <tr key={key} className="hover:bg-gray-50">
-                            <td className="px-3 py-2">{userName}</td>
-                            <td className="px-3 py-2 text-gray-600">{formatTime(conflictForTime)}</td>
+                            <td className="px-3 py-2">
+                              {displayName !== "Không xác định" ? (
+                                displayName
+                              ) : (
+                                <span className="text-gray-400 italic">
+                                  {conflict?.facility?.name || conflict?.roomName || "Phòng không xác định"}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-gray-600">
+                              {displayTime !== "N/A" ? (
+                                displayTime
+                              ) : (
+                                <span className="text-gray-400 italic">Chưa có thông tin</span>
+                              )}
+                            </td>
                             <td className="px-3 py-2">
                               <Badge type={badge.type}>{badge.label}</Badge>
                             </td>

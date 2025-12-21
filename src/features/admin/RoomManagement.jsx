@@ -110,6 +110,9 @@ export default function RoomManagement() {
         allStatuses: true 
       });
       console.log("[RoomManagement.loadRooms] Received data:", data?.length || 0, "rooms");
+      // Log rooms with maintenance status for debugging
+      const maintenanceRooms = data?.filter(room => String(room.status || '').toLowerCase() === 'maintenance') || [];
+      console.log("[RoomManagement.loadRooms] Maintenance rooms count:", maintenanceRooms.length, maintenanceRooms);
       setRooms(data || []);
     } catch (error) {
       console.error("[RoomManagement.loadRooms] Lỗi tải danh sách phòng:", error);
@@ -274,19 +277,33 @@ export default function RoomManagement() {
   }, [rooms]);
 
   const filteredRooms = useMemo(() => {
-    return rooms.filter((room) => {
+    const filtered = rooms.filter((room) => {
       // Filter theo search term
       const matchesSearch = room.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           room.type.toLowerCase().includes(searchTerm.toLowerCase());
+                           room.type?.toLowerCase().includes(searchTerm.toLowerCase());
       
-      // Filter theo status
-      const matchesStatus = statusFilter === "all" || room.status === statusFilter;
+      // Filter theo status (normalize cả hai phía để tránh lỗi case sensitivity)
+      const roomStatus = String(room.status || '').toLowerCase();
+      const filterStatus = String(statusFilter || '').toLowerCase();
+      const matchesStatus = filterStatus === "all" || roomStatus === filterStatus;
       
       // Filter theo loại phòng
       const matchesType = typeFilter === "all" || room.type === typeFilter;
       
       return matchesSearch && matchesStatus && matchesType;
     });
+    
+    // Debug log khi filter maintenance
+    if (statusFilter === "maintenance") {
+      console.log("[RoomManagement.filteredRooms] Filtering maintenance rooms:", {
+        totalRooms: rooms.length,
+        maintenanceRooms: rooms.filter(r => String(r.status || '').toLowerCase() === 'maintenance').length,
+        filteredCount: filtered.length,
+        statusFilter
+      });
+    }
+    
+    return filtered;
   }, [rooms, searchTerm, statusFilter, typeFilter]);
 
   const campuses = api.getCampuses();

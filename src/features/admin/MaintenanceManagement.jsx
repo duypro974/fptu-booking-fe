@@ -24,11 +24,66 @@ export default function MaintenanceManagement() {
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState(false);
 
+  // Load schedules từ sessionStorage khi component mount (sau F5)
+  useEffect(() => {
+    try {
+      const savedSchedules = sessionStorage.getItem('maintenanceSchedules');
+      if (savedSchedules) {
+        const parsed = JSON.parse(savedSchedules);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          console.log("[MaintenanceManagement] Loaded", parsed.length, "schedules from sessionStorage");
+          setMaintenanceSchedules(parsed);
+        }
+      }
+    } catch (e) {
+      console.warn("[MaintenanceManagement] Error loading schedules from sessionStorage:", e);
+    }
+  }, []);
+
+  // Load schedules từ sessionStorage khi component mount (sau F5)
+  useEffect(() => {
+    try {
+      const savedSchedules = sessionStorage.getItem('maintenanceSchedules');
+      if (savedSchedules) {
+        const parsed = JSON.parse(savedSchedules);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          console.log("[MaintenanceManagement] Loaded", parsed.length, "schedules from sessionStorage");
+          setMaintenanceSchedules(parsed);
+        }
+      }
+    } catch (e) {
+      console.warn("[MaintenanceManagement] Error loading schedules from sessionStorage:", e);
+    }
+  }, []);
+
   useEffect(() => {
     if (user?.campus || user?.campusId) {
       loadData();
     }
   }, [user]);
+  
+  // Lưu schedules vào sessionStorage khi có thay đổi
+  useEffect(() => {
+    if (maintenanceSchedules.length > 0) {
+      try {
+        sessionStorage.setItem('maintenanceSchedules', JSON.stringify(maintenanceSchedules));
+      } catch (e) {
+        console.warn("[MaintenanceManagement] Error saving schedules to sessionStorage:", e);
+      }
+    }
+  }, [maintenanceSchedules]);
+  
+  // Lưu schedules vào sessionStorage khi có thay đổi
+  useEffect(() => {
+    if (maintenanceSchedules.length > 0) {
+      try {
+        sessionStorage.setItem('maintenanceSchedules', JSON.stringify(maintenanceSchedules));
+        console.log("[MaintenanceManagement] Saved", maintenanceSchedules.length, "schedules to sessionStorage");
+      } catch (e) {
+        console.warn("[MaintenanceManagement] Error saving schedules to sessionStorage:", e);
+      }
+    }
+  }, [maintenanceSchedules]);
 
   const loadData = async () => {
     setLoading(true);
@@ -49,23 +104,120 @@ export default function MaintenanceManagement() {
         campusId = 2; // Default to HCM
       }
 
-      // Load rooms và maintenance schedules
+      // Load rooms (bao gồm cả maintenance) và maintenance schedules
       const [roomsData, schedulesData] = await Promise.all([
         api.getRooms({ 
           campusId,
-          includeInactive: false,
-          allStatuses: false // Chỉ lấy phòng ACTIVE (không lấy đang maintenance)
+          includeInactive: true,
+          allStatuses: true // Lấy tất cả status bao gồm cả MAINTENANCE
         }),
         getMaintenanceSchedules().catch(err => {
-          // Nếu API chưa có hoặc lỗi, trả về empty array
+          // Nếu API chưa có hoặc lỗi, trả về null để fallback
           console.warn("[MaintenanceManagement] Lỗi tải maintenance schedules:", err);
-          return [];
+          return null;
         })
       ]);
 
-      setRooms(Array.isArray(roomsData) ? roomsData : []);
-      // API trả về array trực tiếp, không cần .data
-      setMaintenanceSchedules(Array.isArray(schedulesData) ? schedulesData : []);
+      const rooms = Array.isArray(roomsData) ? roomsData : [];
+      setRooms(rooms);
+      
+      // Nếu API maintenance schedules fail, tạo từ danh sách phòng có status maintenance
+      if (schedulesData === null || !Array.isArray(schedulesData) || schedulesData.length === 0) {
+        console.log("[MaintenanceManagement] Fallback: Tạo maintenance schedules từ phòng có status maintenance");
+        console.log("[MaintenanceManagement] Total rooms loaded:", rooms.length);
+        console.log("[MaintenanceManagement] Room statuses:", rooms.map(r => ({ id: r.id, name: r.name, status: r.status })));
+        
+        const maintenanceRooms = rooms.filter(room => {
+          const status = String(room.status || '').toLowerCase();
+          const isMaintenance = status === 'maintenance';
+          if (isMaintenance) {
+            console.log("[MaintenanceManagement] ✅ Found maintenance room:", { id: room.id, name: room.name, status: room.status });
+          }
+          return isMaintenance;
+        });
+        
+        console.log("[MaintenanceManagement] Maintenance rooms found:", maintenanceRooms.length);
+        
+        // Tạo mock maintenance schedules từ phòng maintenance
+        const fallbackSchedules = maintenanceRooms.map(room => ({
+          id: room.id,
+          facilityId: room.id,
+          facility: {
+            id: room.id,
+            name: room.name,
+            type: room.type
+          },
+          roomName: room.name,
+          startDate: new Date().toISOString(), // Giả sử bắt đầu từ bây giờ
+          endDate: null, // Vô thời hạn
+          reason: "Phòng đang bảo trì",
+          status: "ACTIVE"
+        }));
+        
+        // Merge với schedules hiện tại (nếu có) để không mất schedules đã thêm vào
+        setMaintenanceSchedules(prev => {
+          // Lấy danh sách facilityId đã có trong prev và từ fallback
+          const existingFacilityIds = new Set(prev.map(s => s.facilityId));
+          const fallbackFacilityIds = new Set(fallbackSchedules.map(s => s.facilityId));
+          
+          // Giữ lại TẤT CẢ schedules từ prev mà KHÔNG có trong fallback 
+          // (phòng vừa thiết lập có thể chưa được backend update status, nên không có trong rooms với status maintenance)
+          const prevSchedulesToKeep = prev.filter(s => {
+            const notInFallback = !fallbackFacilityIds.has(s.facilityId);
+            if (notInFallback) {
+              console.log("[MaintenanceManagement] Keeping schedule (not found in fallback):", s.roomName || s.facility?.name, "facilityId:", s.facilityId);
+            }
+            return notInFallback;
+          });
+          
+          // Chỉ thêm schedules mới từ fallback (chưa có trong prev)
+          const newSchedules = fallbackSchedules.filter(s => !existingFacilityIds.has(s.facilityId));
+          
+          // Merge: giữ lại schedules từ prev (phòng vừa thiết lập) + schedules từ fallback
+          const merged = [...prevSchedulesToKeep, ...fallbackSchedules];
+          
+          console.log("[MaintenanceManagement] ✅ Merged schedules:", {
+            previous: prev.length,
+            keptFromPrev: prevSchedulesToKeep.length,
+            newFromFallback: newSchedules.length,
+            total: merged.length,
+            fallbackTotal: fallbackSchedules.length
+          });
+          
+          return merged;
+        });
+        console.log("[MaintenanceManagement] ✅ Tạo được", fallbackSchedules.length, "maintenance schedules từ phòng");
+      } else {
+        // API trả về array trực tiếp, không cần .data
+        console.log("[MaintenanceManagement] ✅ Loaded", schedulesData.length, "maintenance schedules from API");
+        
+        // Merge với schedules hiện tại (nếu có) để không mất schedules vừa thêm vào
+        setMaintenanceSchedules(prev => {
+          const apiSchedules = Array.isArray(schedulesData) ? schedulesData : [];
+          const apiFacilityIds = new Set(apiSchedules.map(s => s.facilityId));
+          
+          // Giữ lại TẤT CẢ schedules từ prev mà KHÔNG có trong API
+          // (phòng vừa thiết lập có thể chưa được backend sync, nên không có trong API response)
+          const prevSchedulesToKeep = prev.filter(s => {
+            const notInAPI = !apiFacilityIds.has(s.facilityId);
+            if (notInAPI) {
+              console.log("[MaintenanceManagement] Keeping schedule (not found in API):", s.roomName || s.facility?.name, "facilityId:", s.facilityId);
+            }
+            return notInAPI;
+          });
+          
+          // Nếu có schedules trong API, dùng API data + schedules từ prev (phòng vừa thiết lập)
+          const merged = [...apiSchedules, ...prevSchedulesToKeep];
+          
+          console.log("[MaintenanceManagement] ✅ Merged schedules with API:", {
+            fromAPI: apiSchedules.length,
+            keptFromPrev: prevSchedulesToKeep.length,
+            total: merged.length
+          });
+          
+          return merged;
+        });
+      }
     } catch (error) {
       console.error("[MaintenanceManagement] Lỗi tải dữ liệu:", error);
       setRooms([]);
@@ -142,12 +294,50 @@ export default function MaintenanceManagement() {
 
       console.log("[MaintenanceManagement] Set maintenance result:", result);
       
+      // Tìm phòng vừa thiết lập bảo trì
+      const roomJustSet = rooms.find(r => r.id === Number(formData.facilityId));
+      
+      // Thêm maintenance schedule vào state ngay lập tức (không cần chờ reload)
+      if (roomJustSet) {
+        const newSchedule = {
+          id: result?.id || roomJustSet.id || Date.now(),
+          facilityId: Number(formData.facilityId),
+          facility: {
+            id: roomJustSet.id,
+            name: roomJustSet.name,
+            type: roomJustSet.type
+          },
+          roomName: roomJustSet.name,
+          startDate: startDate,
+          endDate: endDate || null,
+          reason: formData.reason.trim(),
+          status: "ACTIVE"
+        };
+        
+        console.log("[MaintenanceManagement] ✅ Adding new maintenance schedule to state immediately:", newSchedule);
+        setMaintenanceSchedules(prev => {
+          // Kiểm tra xem đã có schedule cho phòng này chưa (tránh duplicate)
+          const exists = prev.some(s => s.facilityId === Number(formData.facilityId));
+          if (exists) {
+            console.log("[MaintenanceManagement] Schedule already exists for this room, updating...");
+            return prev.map(s => s.facilityId === Number(formData.facilityId) ? newSchedule : s);
+          }
+          return [...prev, newSchedule];
+        });
+      }
+      
       setFormSuccess(true);
       
-      // Reload data after 1 second
+      // Reload data sau 1.5 giây để đảm bảo backend đã update status của facility
+      // Đồng thời cập nhật lại danh sách từ server
       setTimeout(async () => {
+        console.log("[MaintenanceManagement] Reloading data after setting maintenance...");
         await loadData();
-        handleCloseForm();
+        
+        // Đợi thêm một chút để đảm bảo data đã được load xong
+        setTimeout(() => {
+          handleCloseForm();
+        }, 300);
       }, 1500);
     } catch (error) {
       console.error("[MaintenanceManagement] Lỗi thiết lập bảo trì:", error);
@@ -235,10 +425,11 @@ export default function MaintenanceManagement() {
     );
 
     return rooms.filter(room => {
-      const status = String(room.status || "").toUpperCase();
-      const isActive = status === "ACTIVE";
+      const status = String(room.status || "").toLowerCase();
+      const isActive = status === "active";
       const isNotInMaintenance = !maintenanceFacilityIds.has(room.id);
-      return isActive && isNotInMaintenance;
+      const isNotMaintenanceStatus = status !== "maintenance"; // Loại bỏ phòng có status = maintenance
+      return isActive && isNotInMaintenance && isNotMaintenanceStatus;
     });
   }, [rooms, maintenanceSchedules]);
 

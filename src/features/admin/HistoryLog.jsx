@@ -592,6 +592,15 @@ export default function HistoryLog() {
                     </>
                   )}
 
+                  {selectedLog.purpose && (
+                    <div>
+                      <label className="text-sm font-medium text-gray-500">Mục đích sử dụng</label>
+                      <div className="mt-1 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                        <p className="text-gray-900">{selectedLog.purpose}</p>
+                      </div>
+                    </div>
+                  )}
+
                   {selectedLog.changes && (
                     <div>
                       <label className="text-sm font-medium text-gray-500">Chi tiết thay đổi</label>
