@@ -19,7 +19,6 @@ import {
   XCircle,
   Clock,
   Building2,
-  ArrowRight,
   RefreshCw,
 } from "lucide-react";
 
@@ -29,7 +28,6 @@ const DEFAULT_SLOTS = [
   { id: 3, start: "11:00", end: "13:00", label: "Slot 3" },
   { id: 4, start: "13:00", end: "15:00", label: "Slot 4" },
   { id: 5, start: "15:00", end: "17:00", label: "Slot 5" },
-  
 ];
 
 function toLocalYMD(date = new Date()) {
@@ -85,11 +83,7 @@ export default function RecurringBooking() {
   const todayYMD = toLocalYMD(new Date());
   const isToday = startDate === todayYMD;
 
-  const slotExpired = (slot) => {
-    if (!isToday) return false;
-    return parseTimeToMinutes(slot.end) <= nowMinutes();
-  };
-
+  const slotExpired = (slot) => isToday && parseTimeToMinutes(slot.end) <= nowMinutes();
   const slotOngoing = (slot) => {
     if (!isToday) return false;
     const now = nowMinutes();
@@ -148,17 +142,9 @@ export default function RecurringBooking() {
 
   const handleSlotToggle = (slotId) => {
     const slot = DEFAULT_SLOTS.find((s) => s.id === slotId);
-    if (!slot) return;
-
-    // Chặn không cho chọn slot đã qua hoặc đang diễn ra
-    if (slotExpired(slot) || slotOngoing(slot)) {
-      return;
-    }
-
+    if (!slot || slotExpired(slot) || slotOngoing(slot)) return;
     setSelectedSlots((prev) =>
-      prev.includes(slotId)
-        ? prev.filter((id) => id !== slotId)
-        : [...prev, slotId]
+      prev.includes(slotId) ? prev.filter((id) => id !== slotId) : [...prev, slotId]
     );
   };
 
@@ -194,7 +180,6 @@ export default function RecurringBooking() {
       console.log("[RecurringBooking] Scanning availability:", payload);
       const results = await scanRecurringAvailability(payload);
       console.log("[RecurringBooking] Scan results:", results);
-      // Log first result with CONFLICT_RESOLVED status for debugging
       const conflictResult = results?.find(r => r.status === "CONFLICT_RESOLVED" || r.status === "CONFLICT");
       if (conflictResult) {
         console.log("[RecurringBooking] CONFLICT_RESOLVED result structure:", JSON.stringify(conflictResult, null, 2));
@@ -265,6 +250,14 @@ export default function RecurringBooking() {
       return;
     }
 
+    const attendeeNum = parseInt(attendeeCount);
+    const maxCapacity = selectedFacility?.capacity || 200;
+    
+    if (attendeeNum > maxCapacity) {
+      setCreateError(`Số lượng người tham gia không được vượt quá ${maxCapacity} người (sức chứa của phòng).`);
+      return;
+    }
+
     setCreating(true);
     setCreateError("");
 
@@ -283,14 +276,9 @@ export default function RecurringBooking() {
           const weekDate = new Date(startDateObj);
           weekDate.setDate(startDateObj.getDate() + (week - 1) * 7);
 
-          // Determine facility ID: use alternative facility if CONFLICT_RESOLVED, otherwise use original
-          const targetFacilityId = 
-            (result.status === "CONFLICT_RESOLVED" || result.status === "CONFLICT") && result.facilityId
-              ? Number(result.facilityId)
-              : Number(facilityId);
-          
-          // Log for debugging
-          if (result.status === "CONFLICT_RESOLVED" || result.status === "CONFLICT") {
+          const isConflict = result.status === "CONFLICT_RESOLVED" || result.status === "CONFLICT";
+          const targetFacilityId = isConflict && result.facilityId ? Number(result.facilityId) : Number(facilityId);
+          if (isConflict) {
             console.log(`[RecurringBooking] Week ${week} - Using facility ID: ${targetFacilityId} (original: ${facilityId}, result.facilityId: ${result.facilityId})`);
           }
 
@@ -315,8 +303,8 @@ export default function RecurringBooking() {
             }
 
             return {
-              facilityId: targetFacilityId, // Use alternative facility for CONFLICT_RESOLVED, original otherwise
-              bookingTypeId: 1, // Normal booking
+              facilityId: targetFacilityId,
+              bookingTypeId: 1,
               startTime: startDateTime.toISOString(),
               endTime: endDateTime.toISOString(),
               attendeeCount: parseInt(attendeeCount),
@@ -343,14 +331,11 @@ export default function RecurringBooking() {
         return;
       }
 
-      // Combine purpose and support note for the note field
-      let noteText = purpose.trim();
-      if (supportNote.trim()) {
-        noteText = supportNote.trim();
-        if (purpose.trim()) {
-          noteText = `${purpose.trim()}\n\nYêu cầu hỗ trợ: ${supportNote.trim()}`;
-        }
-      }
+      const purposeTrimmed = purpose.trim();
+      const supportTrimmed = supportNote.trim();
+      const noteText = supportTrimmed 
+        ? (purposeTrimmed ? `${purposeTrimmed}\n\nYêu cầu hỗ trợ: ${supportTrimmed}` : supportTrimmed)
+        : purposeTrimmed;
 
       const payload = {
         note: noteText,
@@ -359,12 +344,8 @@ export default function RecurringBooking() {
 
       console.log("[RecurringBooking] Creating recurring booking:", payload);
       console.log("[RecurringBooking] Bookings detail:", bookings.map((b, idx) => ({
-        index: idx,
-        facilityId: b.facilityId,
-        startTime: b.startTime,
-        endTime: b.endTime,
+        index: idx, facilityId: b.facilityId, startTime: b.startTime, endTime: b.endTime,
       })));
-      // Group bookings by facility ID to see if there's a mix
       const facilityIdGroups = bookings.reduce((acc, b) => {
         acc[b.facilityId] = (acc[b.facilityId] || 0) + 1;
         return acc;
@@ -394,25 +375,11 @@ export default function RecurringBooking() {
           const message = errorData.message || errorData.error || errorData.msg || "";
           const messageLower = message.toLowerCase();
           
-          // Check for conflict-related keywords
-          if (
-            messageLower.includes("conflict") ||
-            messageLower.includes("xung đột") ||
-            messageLower.includes("trùng") ||
-            messageLower.includes("đã có lịch") ||
-            messageLower.includes("already booked") ||
-            messageLower.includes("occupied") ||
-            messageLower.includes("không thể đặt") ||
-            messageLower.includes("schedule conflict")
-          ) {
-            errorMessage = `❌ Không thể đặt phòng do bị trùng lịch!\n\n` +
-              `${message || "Bạn đã có booking khác vào cùng thời gian này. "}` +
-              `\n\nVui lòng kiểm tra lại lịch đặt phòng của bạn hoặc chọn thời gian khác.`;
-          } else if (message) {
-            // Other 400 errors with specific message
-            errorMessage = message;
+          const conflictKeywords = ["conflict", "xung đột", "trùng", "đã có lịch", "already booked", "occupied", "không thể đặt", "schedule conflict"];
+          if (conflictKeywords.some(keyword => messageLower.includes(keyword))) {
+            errorMessage = `❌ Không thể đặt phòng do bị trùng lịch!\n\n${message || "Bạn đã có booking khác vào cùng thời gian này. "}\n\nVui lòng kiểm tra lại lịch đặt phòng của bạn hoặc chọn thời gian khác.`;
           } else {
-            errorMessage = "Dữ liệu đặt phòng không hợp lệ. Vui lòng kiểm tra lại thông tin.";
+            errorMessage = message || "Dữ liệu đặt phòng không hợp lệ. Vui lòng kiểm tra lại thông tin.";
           }
         } else if (err.response.status === 403) {
           errorMessage = "Bạn không có quyền thực hiện thao tác này.";
@@ -767,13 +734,35 @@ export default function RecurringBooking() {
                 <input
                   type="number"
                   min="1"
-                  max={selectedFacility?.capacity || 999}
+                  max={selectedFacility?.capacity || 200}
                   value={attendeeCount}
-                  onChange={(e) => setAttendeeCount(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
-                  placeholder={`Tối đa ${selectedFacility?.capacity || "N/A"} người`}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    const numValue = parseInt(value);
+                    const maxCapacity = selectedFacility?.capacity || 200;
+                    if (value && !isNaN(numValue) && numValue > maxCapacity) {
+                      setAttendeeCount(maxCapacity.toString());
+                      setCreateError(`Số lượng người tham gia không được vượt quá ${maxCapacity} người (sức chứa của phòng).`);
+                    } else {
+                      setAttendeeCount(value);
+                      if (createError?.includes("Số lượng người tham gia không được vượt quá")) {
+                        setCreateError("");
+                      }
+                    }
+                  }}
+                  className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none ${
+                    attendeeCount && parseInt(attendeeCount) > (selectedFacility?.capacity || 200)
+                      ? "border-red-300 bg-red-50"
+                      : "border-gray-300"
+                  }`}
+                  placeholder={`Tối đa ${selectedFacility?.capacity || 200} người`}
                   required
                 />
+                {attendeeCount && parseInt(attendeeCount) > (selectedFacility?.capacity || 200) && (
+                  <p className="text-xs text-red-600 mt-1">
+                    Số lượng vượt quá sức chứa tối đa ({selectedFacility?.capacity || 200} người)
+                  </p>
+                )}
               </div>
 
               <div>
@@ -812,7 +801,14 @@ export default function RecurringBooking() {
                 </Button>
                 <Button
                   onClick={handleCreateBooking}
-                  disabled={selectedWeeks.length === 0 || creating || !purpose.trim() || !attendeeCount}
+                  disabled={
+                    selectedWeeks.length === 0 || 
+                    creating || 
+                    !purpose.trim() || 
+                    !attendeeCount || 
+                    parseInt(attendeeCount) < 1 ||
+                    parseInt(attendeeCount) > (selectedFacility?.capacity || 200)
+                  }
                   className="flex-1 bg-orange-600 hover:bg-orange-700 text-white"
                 >
                   {creating ? (
