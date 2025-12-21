@@ -220,7 +220,7 @@ export default function BookingDetailModal({ isOpen, onClose, bookingId, onSucce
       const campus = user?.campus || null;
       await api.approveBooking(bookingId, campus, user?.name || "Admin");
       await loadBookingDetail(); // Refetch to update status
-      onSuccess?.();
+      onSuccess?.("Duyệt đơn thành công!");
     } catch (e) {
       console.error("[BookingDetailModal] Error approving:", e);
       setError(e.message || "Lỗi khi duyệt đơn");
@@ -244,7 +244,8 @@ export default function BookingDetailModal({ isOpen, onClose, bookingId, onSucce
       await api.rejectBooking(bookingId, rejectReason, user?.name || "Admin");
       await loadBookingDetail(); // Refetch to update status
       setRejectReason("");
-      onSuccess?.();
+      onSuccess?.("Từ chối đơn thành công!");
+
     } catch (e) {
       console.error("[BookingDetailModal] Error rejecting:", e);
       setError(e.message || "Lỗi khi từ chối đơn");
@@ -374,7 +375,8 @@ export default function BookingDetailModal({ isOpen, onClose, bookingId, onSucce
       );
       setSelectedSlots(new Set(newPendingSlots.map((child) => child.id)));
       setRejectionReasons({});
-      onSuccess?.();
+      onSuccess?.(`Đã xử lý lịch định kỳ: duyệt ${toApprove.length} slot, từ chối ${toReject.length} slot.`);
+
     } catch (e) {
       console.error("[BookingDetailModal] Error processing approval:", e);
       setError(e.message || "Lỗi khi xử lý duyệt đơn");
@@ -400,7 +402,7 @@ export default function BookingDetailModal({ isOpen, onClose, bookingId, onSucce
       setCancelReason("");
       setCancellingSlotId(null);
       await loadBookingDetail(); // Refetch data
-      onSuccess?.();
+     onSuccess?.("Đã hủy slot thành công!");
     } catch (e) {
       console.error("[BookingDetailModal] Error cancelling slot:", e);
       setError(e.message || "Lỗi khi hủy slot");

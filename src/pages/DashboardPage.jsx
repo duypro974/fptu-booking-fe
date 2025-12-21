@@ -10,47 +10,50 @@ import { getMyBookings } from "../services/bookingService";
 // Helper để format slot từ startTime và endTime
 const getSlotLabelFromTimes = (startTime, endTime) => {
   if (!startTime || !endTime) return "—";
-  
+
   const start = new Date(startTime);
   const end = new Date(endTime);
-  
-  const formatHHmm = (date) => {
-    return date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
-  };
-  
-  const s = formatHHmm(start);
-  const e = formatHHmm(end);
-  
-  // Slot definitions (giống backend)
-  const SLOT_DEFS = [
-    { id: 1, start: "07:00", end: "09:00" },
-    { id: 2, start: "09:00", end: "11:00" },
-    { id: 3, start: "11:00", end: "13:00" },
-    { id: 4, start: "13:00", end: "15:00" },
-    { id: 5, start: "15:00", end: "17:00" },
+
+  const startH = start.getHours();
+  const startM = start.getMinutes();
+  const endH = end.getHours();
+  const endM = end.getMinutes();
+
+  const SLOT_RANGES = [
+    { id: 1, startH: 7, startM: 0, endH: 9, endM: 0 },
+    { id: 2, startH: 9, startM: 0, endH: 11, endM: 0 },
+    { id: 3, startH: 11, startM: 0, endH: 13, endM: 0 },
+    { id: 4, startH: 13, startM: 0, endH: 15, endM: 0 },
+    { id: 5, startH: 15, startM: 0, endH: 17, endM: 0 },
   ];
-  
-  // Tìm slot đơn lẻ
-  const singleMatch = SLOT_DEFS.find((x) => x.start === s && x.end === e);
-  if (singleMatch) {
-    return `Slot ${singleMatch.id} (${singleMatch.start} - ${singleMatch.end})`;
+
+  const findSlotByTime = (h, m, type) => {
+    return SLOT_RANGES.find(s => {
+      if (type === 'start') return s.startH === h && s.startM === m;
+      if (type === 'end') return s.endH === h && s.endM === m;
+      return false;
+    }) || null;
+  };
+
+  const startSlot = findSlotByTime(startH, startM, 'start');
+  const endSlot = findSlotByTime(endH, endM, 'end');
+
+  const formatH = (d) => d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  const sStr = formatH(start);
+  const eStr = formatH(end);
+
+  if (startSlot && endSlot && startSlot.id === endSlot.id) {
+    return `Slot ${startSlot.id} (${sStr} - ${eStr})`;
   }
-  
-  // Tìm nhiều slot liên tiếp
-  const startSlot = SLOT_DEFS.find((x) => x.start === s);
-  const endSlot = SLOT_DEFS.find((x) => x.end === e);
-  
-  if (startSlot && endSlot && startSlot.id <= endSlot.id) {
-    const slotIds = [];
-    for (let i = startSlot.id; i <= endSlot.id; i++) {
-      slotIds.push(i);
-    }
-    if (slotIds.length > 1) {
-      return `Slot ${slotIds.join(", ")} (${s} - ${e})`;
-    }
+
+  if (startSlot && endSlot && startSlot.id < endSlot.id) {
+    const ids = [];
+    for (let i = startSlot.id; i <= endSlot.id; i++) ids.push(i);
+    return `Slot ${ids.join(', ')} (${sStr} - ${eStr})`;
   }
-  
-  return `${s} - ${e}`;
+
+  // Fallback to simple range
+  return `${sStr} - ${eStr}`;
 };
 
 export default function DashboardPage() {
@@ -68,6 +71,7 @@ export default function DashboardPage() {
         const list = Array.isArray(data) ? data : data?.items ?? data?.data ?? [];
         setBookings(Array.isArray(list) ? list : []);
       } catch (e) {
+        console.error('[DashboardPage] fetchBookings error:', e);
         setBookings([]);
         setError(e?.message || "Không thể tải dữ liệu");
       } finally {
@@ -152,6 +156,16 @@ export default function DashboardPage() {
       .slice(0, 5); // Chỉ lấy 5 booking đầu tiên
   }, [bookings]);
 
+  const formatCreatedAt = (dateString) => {
+    if (!dateString) return "-";
+    try {
+      const d = new Date(dateString);
+      return d.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+    } catch (e) {
+      return "-";
+    }
+  };
+
   return (
     <div className="space-y-8 animate-fade-in max-w-7xl mx-auto">
       
@@ -187,6 +201,35 @@ export default function DashboardPage() {
               <div className="h-24 bg-gray-200 rounded"></div>
             </Card>
           ))}
+        </div>
+      ) : error ? (
+        <div className=""> 
+          <Card className="p-6 text-center bg-red-50 border-red-100">
+            <p className="text-red-700 font-medium">Lỗi khi tải dữ liệu: {error}</p>
+            <div className="mt-4">
+              <Button onClick={() => {
+                // retry
+                setLoading(true);
+                setError("");
+                // call effect by toggling user (simple approach: re-run fetchBookings by triggering useEffect)
+                // Better: call getMyBookings directly here
+                (async () => {
+                  try {
+                    const data = await getMyBookings();
+                    const list = Array.isArray(data) ? data : data?.items ?? data?.data ?? [];
+                    setBookings(Array.isArray(list) ? list : []);
+                  } catch (e) {
+                    console.error('[DashboardPage] retry error:', e);
+                    setError(e?.message || 'Không thể tải dữ liệu');
+                  } finally {
+                    setLoading(false);
+                  }
+                })();
+              }}>
+                Thử lại
+              </Button>
+            </div>
+          </Card>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -309,6 +352,7 @@ export default function DashboardPage() {
                           <p className="text-gray-500 text-sm flex items-center gap-2 mt-1">
                             <Clock className="w-4 h-4" /> {timeRange}
                           </p>
+                          <p className="text-xs text-gray-400 mt-1">Đặt: {formatCreatedAt(booking?.createdAt)}</p>
                         </div>
                         <span className={`px-3 py-1 ${statusInfo.bg} ${statusInfo.text} text-xs rounded-full font-bold border ${statusInfo.border}`}>
                           {statusInfo.label}

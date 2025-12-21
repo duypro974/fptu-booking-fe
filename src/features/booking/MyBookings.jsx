@@ -98,6 +98,28 @@ const getSlotLabelFromTimes = (startTime, endTime) => {
   return `${s} - ${e}`;
 };
 
+/** ✅ NEW: lấy slot id(s) của buổi cũ từ start/end time (để ẩn) */
+const getSlotIdsFromTimes = (startTime, endTime) => {
+  const s = formatHHmm(startTime);
+  const e = formatHHmm(endTime);
+  if (!s || !e) return [];
+
+  const single = SLOT_DEFS.find((x) => x.start === s && x.end === e);
+  if (single) return [single.id];
+
+  const startSlot = SLOT_DEFS.find((x) => x.start === s);
+  const endSlot = SLOT_DEFS.find((x) => x.end === e);
+
+  if (startSlot && endSlot && startSlot.id <= endSlot.id) {
+    const ids = [];
+    for (let i = startSlot.id; i <= endSlot.id; i++) ids.push(i);
+    return ids;
+  }
+
+  if (startSlot) return [startSlot.id];
+  return [];
+};
+
 const pickFacilityName = (item) =>
   item?.facilityName ||
   item?.facility?.name ||
@@ -118,44 +140,34 @@ const pickSlots = (item) => {
   // Với booking định kỳ (isGroup)
   if (item?.isGroup && Array.isArray(item?.bookings) && item.bookings.length > 0) {
     const b0 = item.bookings[0];
-    
-    // Thử lấy từ booking đầu tiên (có thể bao gồm nhiều slot)
+
     const labelFromFirst = getSlotLabelFromTimes(b0?.startTime, b0?.endTime);
-    
-    // Nếu label từ booking đầu đã có nhiều slot (ví dụ "Slot 1, 2, 3"), dùng luôn
     if (labelFromFirst && labelFromFirst.includes(",")) {
       return labelFromFirst;
     }
-    
-    // Nếu không, thu thập tất cả các slot từ các booking con
-    // Mỗi booking con có thể là một slot riêng
+
     const allSlots = new Set();
     item.bookings.forEach((booking) => {
-      // Thử lấy từ bookingSlots nếu có
       if (Array.isArray(booking?.bookingSlots)) {
         booking.bookingSlots.forEach((bs) => {
           if (bs?.slot) allSlots.add(bs.slot);
         });
       }
-      
-      // Thử lấy từ slots field
+
       if (Array.isArray(booking?.slots)) {
         booking.slots.forEach((slotId) => allSlots.add(slotId));
       }
       if (typeof booking?.slot === "number") {
         allSlots.add(booking.slot);
       }
-      
-      // Tính toán từ startTime/endTime
+
       if (booking?.startTime && booking?.endTime) {
         const slotLabel = getSlotLabelFromTimes(booking.startTime, booking.endTime);
-        // Extract slot numbers từ label (ví dụ "Slot 1, 2, 3" -> [1, 2, 3])
         const slotMatches = slotLabel.match(/Slot\s+(\d+(?:\s*,\s*\d+)*)/);
         if (slotMatches) {
           const slotNums = slotMatches[1].split(",").map((n) => parseInt(n.trim()));
           slotNums.forEach((num) => allSlots.add(num));
         } else {
-          // Nếu chỉ có 1 slot, extract số
           const singleMatch = slotLabel.match(/Slot\s+(\d+)/);
           if (singleMatch) {
             allSlots.add(parseInt(singleMatch[1]));
@@ -163,18 +175,15 @@ const pickSlots = (item) => {
         }
       }
     });
-    
+
     if (allSlots.size > 0) {
       const sortedSlots = Array.from(allSlots).sort((a, b) => a - b);
       return sortedSlots.map((n) => `Slot ${n}`).join(", ");
     }
-    
-    // Fallback: dùng label từ booking đầu tiên
+
     return labelFromFirst || "—";
   }
-  if (item?.startTime && item?.endTime) return getSlotLabelFromTimes(item.startTime, item.endTime);
 
-  // Booking thường (không phải group)
   if (item?.startTime && item?.endTime) {
     return getSlotLabelFromTimes(item.startTime, item.endTime);
   }
@@ -205,9 +214,6 @@ const extractLogInfo = (data) => {
 
 /* =========================================================
    ✅ FIX: TÓM TẮT TRẠNG THÁI CHO BOOKING ĐỊNH KÌ (isGroup)
-   - Nếu buổi bị CANCELLED/REJECTED/PREEMPTED nhưng đã có
-     booking reschedule (PENDING/APPROVED/COMPLETED) thay thế
-     => coi như đã được xử lý, KHÔNG tính vào "Có vấn đề".
 ========================================================= */
 const summarizeGroupStatus = (item, rescheduleMap) => {
   if (!item?.isGroup || !Array.isArray(item?.bookings)) {
@@ -219,17 +225,16 @@ const summarizeGroupStatus = (item, rescheduleMap) => {
   const total = item.bookings.length;
   if (total === 0) return { st: "PENDING", type: "warning", label: "Chờ duyệt" };
 
-  // ✅ build derived statuses
   const derivedStatuses = item.bookings.map((b) => {
     const st = normalizeStatus(b?.status);
 
-    // nếu buổi này đã có reschedule thay thế => coi như đã xử lý
     const replacement = rescheduleMap?.get?.(Number(b?.id));
     if (replacement) {
       const repSt = normalizeStatus(replacement?.status);
+
       if (repSt === "PENDING") return "RESCHEDULE_PENDING";
       if (repSt === "APPROVED" || repSt === "COMPLETED") return "RESCHEDULED_OK";
-      return "RESCHEDULED_OK";
+      return st;
     }
 
     return st;
@@ -240,7 +245,6 @@ const summarizeGroupStatus = (item, rescheduleMap) => {
   const approved = count("APPROVED");
   const pending = count("PENDING");
 
-  // "bad" chỉ tính những buổi lỗi mà CHƯA có replacement
   const rejected = count("REJECTED");
   const cancelled = count("CANCELLED") + count("CANCELED");
   const preempted = count("PREEMPTED");
@@ -250,7 +254,6 @@ const summarizeGroupStatus = (item, rescheduleMap) => {
   const resPending = count("RESCHEDULE_PENDING");
   const resOk = count("RESCHEDULED_OK");
 
-  // ✅ Nếu tất cả buổi đều OK/Approved/Completed/Rescheduled OK => hiển thị success
   if (approved + completed + resOk === total) {
     return {
       st: "APPROVED",
@@ -259,10 +262,8 @@ const summarizeGroupStatus = (item, rescheduleMap) => {
     };
   }
 
-  // Nếu có bad thật sự
   if (bad > 0) return { st: "ISSUE", type: "danger", label: `Có vấn đề (${bad}/${total})` };
 
-  // Nếu có pending thường hoặc pending đổi lịch
   if (pending + resPending > 0) {
     return {
       st: "PENDING",
@@ -282,26 +283,20 @@ export default function MyBookings() {
   const [error, setError] = useState("");
   const [cancellingId, setCancellingId] = useState(null);
 
-  // ✅ MODAL LOG
-  // Kiểm tra role của user
   const userRole = (user?.role || "").toLowerCase();
   const isLecturer = userRole === "lecturer";
 
-  // ✅ MODAL LOG
-  // ✅ MODAL LOG (booking đơn hoặc booking con trong group)
   const [logOpen, setLogOpen] = useState(false);
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState("");
   const [logData, setLogData] = useState(null);
 
-  // ✅ MODAL RECURRING DETAIL
   const [recurringDetailOpen, setRecurringDetailOpen] = useState(false);
   const [recurringDetailData, setRecurringDetailData] = useState(null);
 
-  // ✅ MODAL RESCHEDULE (chọn ngày + slot)
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
-  const [rescheduleTarget, setRescheduleTarget] = useState(null); // booking child
-  const [rescheduleGroup, setRescheduleGroup] = useState(null); // group data
+  const [rescheduleTarget, setRescheduleTarget] = useState(null);
+  const [rescheduleGroup, setRescheduleGroup] = useState(null);
 
   const fetchMyBookings = async () => {
     setLoading(true);
@@ -327,8 +322,6 @@ export default function MyBookings() {
     fetchMyBookings();
   }, []);
 
-  // ✅ Map: oldBookingId -> reschedule booking (PENDING/APPROVED/COMPLETED/...)
-  // Chỉ map những booking KHÔNG phải group (vì booking đổi lịch thường là booking đơn)
   const rescheduleMap = useMemo(() => {
     const map = new Map();
     (bookings || []).forEach((b) => {
@@ -336,7 +329,6 @@ export default function MyBookings() {
       const fromId = b?.rescheduleFromId ?? b?.rescheduleFromID ?? b?.reschedule_from_id;
       if (!fromId) return;
 
-      // ưu tiên booking mới nhất/ưu tiên APPROVED hơn PENDING
       const key = Number(fromId);
       const existed = map.get(key);
 
@@ -348,10 +340,9 @@ export default function MyBookings() {
       const stNew = normalizeStatus(b?.status);
       const stOld = normalizeStatus(existed?.status);
 
-      // Ưu tiên APPROVED/COMPLETED hơn PENDING
       const score = (st) => {
-        if (st === "APPROVED" || st === "COMPLETED") return 3;
-        if (st === "PENDING") return 2;
+        if (st === "APPROVED" || st === "COMPLETED") return 4;
+        if (st === "PENDING") return 3;
         return 1;
       };
 
@@ -364,7 +355,6 @@ export default function MyBookings() {
     const status = normalizeStatus(booking?.status);
     if (status !== "APPROVED" && status !== "PENDING") return false;
 
-    // Lecture có thể hủy booking bất kỳ lúc nào (không cần kiểm tra thời gian)
     if (isLecturer) return true;
 
     const startTime =
@@ -426,7 +416,6 @@ export default function MyBookings() {
     }
   };
 
-  // ✅ Chỉ mở log khi status là REJECTED/CANCELLED/PREEMPTED
   const openLogModal = async (bookingLike) => {
     const st = normalizeStatus(bookingLike?.status);
     const allowed = ["REJECTED", "CANCELLED", "CANCELED", "PREEMPTED"];
@@ -546,15 +535,12 @@ export default function MyBookings() {
                             )}
                             <span>{pickFacilityName(item)}</span>
                           </div>
-                          {/* Hiển thị thông tin dời lịch nếu có (từ booking history) */}
                           {(() => {
-                            // Kiểm tra trong history xem có previousFacilityId không
                             const history = item?.history || item?.bookingHistories || [];
-                            const moveHistory = history.find(h => h.previousFacilityId != null);
+                            const moveHistory = history.find((h) => h.previousFacilityId != null);
                             if (moveHistory) {
-                              // Cần tìm tên phòng cũ từ previousFacilityId
-                              // Nếu không có tên, chỉ hiển thị thông báo chung
-                              const moveReason = moveHistory.changeReason || "Đã dời lịch do bảo trì phòng";
+                              const moveReason =
+                                moveHistory.changeReason || "Đã dời lịch do bảo trì phòng";
                               return (
                                 <div className="flex items-center gap-1 text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded mt-1">
                                   <AlertCircle className="w-3 h-3" />
@@ -619,7 +605,6 @@ export default function MyBookings() {
                                 setRecurringDetailOpen(true);
                               }}
                               className="whitespace-nowrap"
-                          
                             >
                               <Eye className="w-4 h-4 mr-1" />
                               Chi tiết
@@ -690,12 +675,7 @@ export default function MyBookings() {
       </Card>
 
       {logOpen && (
-        <BookingLogModal
-          loading={logLoading}
-          error={logError}
-          data={logData}
-          onClose={closeLogModal}
-        />
+        <BookingLogModal loading={logLoading} error={logError} data={logData} onClose={closeLogModal} />
       )}
 
       {recurringDetailOpen && recurringDetailData && (
@@ -822,14 +802,7 @@ function BookingLogModal({ loading, error, data, onClose }) {
 }
 
 // ✅ Modal chi tiết booking định kỳ
-function RecurringDetailModal({
-  data,
-  rescheduleMap,
-  onClose,
-  onViewFull,
-  onOpenLog,
-  onReschedule,
-}) {
+function RecurringDetailModal({ data, rescheduleMap, onClose, onViewFull, onOpenLog, onReschedule }) {
   const bookings = Array.isArray(data?.bookings) ? data.bookings : [];
   const sum = summarizeGroupStatus(data, rescheduleMap);
 
@@ -852,9 +825,7 @@ function RecurringDetailModal({
           <div className="flex items-center gap-3">
             <RefreshCw className="w-6 h-6 text-blue-600" />
             <div>
-              <div className="text-lg font-bold text-gray-900">
-                Chi tiết đặt phòng định kỳ
-              </div>
+              <div className="text-lg font-bold text-gray-900">Chi tiết đặt phòng định kỳ</div>
               <div className="text-sm text-gray-600">
                 {pickFacilityName(data)} • {bookings.length} buổi
               </div>
@@ -878,15 +849,11 @@ function RecurringDetailModal({
                 </div>
                 <div>
                   <div className="text-gray-500 mb-1">Số buổi</div>
-                  <div className="font-semibold text-gray-900">
-                    {bookings.length} buổi
-                  </div>
+                  <div className="font-semibold text-gray-900">{bookings.length} buổi</div>
                 </div>
                 <div>
                   <div className="text-gray-500 mb-1">Phòng</div>
-                  <div className="font-semibold text-gray-900">
-                    {pickFacilityName(data)}
-                  </div>
+                  <div className="font-semibold text-gray-900">{pickFacilityName(data)}</div>
                 </div>
                 <div>
                   <div className="text-gray-500 mb-1">Slot</div>
@@ -905,9 +872,7 @@ function RecurringDetailModal({
 
                     <div className="space-y-2">
                       {weekBookings.map((booking, idx) => {
-                        const bookingDate = booking?.startTime
-                          ? formatDate(booking.startTime)
-                          : "—";
+                        const bookingDate = booking?.startTime ? formatDate(booking.startTime) : "—";
                         const bookingSlot = pickSlots(booking);
                         const bookingStatus = normalizeStatus(booking?.status);
                         const bookingMeta = statusMeta(booking?.status);
@@ -916,26 +881,26 @@ function RecurringDetailModal({
                           bookingStatus
                         );
 
-                        // ✅ Check nếu buổi này đã có booking đổi lịch thay thế
                         const replacement = rescheduleMap?.get?.(Number(booking?.id)) || null;
                         const replacementStatus = normalizeStatus(replacement?.status);
+                        const hasActiveReplacement = ["PENDING", "APPROVED", "COMPLETED"].includes(replacementStatus);
 
-                        const hasReplacement = !!replacement;
-                        // Kiểm tra thông tin dời lịch do bảo trì từ booking history
                         const bookingHistory = booking?.history || booking?.bookingHistories || [];
-                        const moveHistory = bookingHistory.find(h => h.previousFacilityId != null);
+                        const moveHistory = bookingHistory.find((h) => h.previousFacilityId != null);
                         const isMovedDueToMaintenance = !!moveHistory;
                         const moveReason = moveHistory?.changeReason || null;
+
                         const replacementLabel =
                           replacementStatus === "PENDING"
                             ? "Đã gửi yêu cầu đổi lịch"
                             : replacementStatus === "APPROVED" || replacementStatus === "COMPLETED"
                               ? "Đã đổi lịch"
-                              : "Đã đổi lịch";
+                              : replacementStatus === "REJECTED"
+                                ? "Yêu cầu đổi lịch bị từ chối"
+                                : "Đã có đổi lịch";
 
-                        // ✅ chỉ cho đổi lịch khi buổi lỗi VÀ CHƯA có replacement
                         const canRescheduleChild =
-                          !hasReplacement &&
+                          !hasActiveReplacement &&
                           ["CANCELLED", "CANCELED", "REJECTED", "PREEMPTED"].includes(bookingStatus);
 
                         return (
@@ -944,12 +909,9 @@ function RecurringDetailModal({
                             className="flex items-center justify-between gap-3 p-2 bg-gray-50 rounded"
                           >
                             <div className="flex-1">
-                              <div className="text-sm font-medium text-gray-900">
-                                {bookingDate}
-                              </div>
+                              <div className="text-sm font-medium text-gray-900">{bookingDate}</div>
                               <div className="text-xs text-gray-600">{bookingSlot}</div>
 
-                              {/* ✅ Hiển thị thông tin dời lịch do bảo trì nếu có */}
                               {isMovedDueToMaintenance && moveReason && (
                                 <div className="mt-2 text-xs">
                                   <div className="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-orange-50 border border-orange-100 text-orange-700">
@@ -958,8 +920,8 @@ function RecurringDetailModal({
                                   </div>
                                 </div>
                               )}
-                              {/* ✅ Hiển thị thông tin buổi thay thế nếu có */}
-                              {hasReplacement && (
+
+                              {hasActiveReplacement && (
                                 <div className="mt-2 text-xs">
                                   <div className="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-blue-50 border border-blue-100 text-blue-700">
                                     <CalendarClock className="w-4 h-4" />
@@ -969,6 +931,15 @@ function RecurringDetailModal({
                                       {formatDate(replacement?.startTime)} •{" "}
                                       {getSlotLabelFromTimes(replacement?.startTime, replacement?.endTime)}
                                     </span>
+                                  </div>
+                                </div>
+                              )}
+
+                              {!hasActiveReplacement && replacementStatus === "REJECTED" && (
+                                <div className="mt-2 text-xs">
+                                  <div className="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-red-50 border border-red-100 text-red-700">
+                                    <AlertCircle className="w-4 h-4" />
+                                    <span className="font-medium">{replacementLabel}</span>
                                   </div>
                                 </div>
                               )}
@@ -1005,9 +976,11 @@ function RecurringDetailModal({
                                 </Button>
                               )}
 
-                              {/* ✅ Nếu đã có replacement thì KHÔNG hiển thị nút đổi lịch nữa */}
-                              {hasReplacement && (
-                                <span className="text-xs text-blue-600 italic" title="Buổi này đã có lịch thay thế">
+                              {hasActiveReplacement && (
+                                <span
+                                  className="text-xs text-blue-600 italic"
+                                  title="Buổi này đã có lịch thay thế"
+                                >
                                   {replacementLabel}
                                 </span>
                               )}
@@ -1020,7 +993,6 @@ function RecurringDetailModal({
                 ))}
               </div>
             </div>
-
           </div>
         </div>
 
@@ -1053,6 +1025,31 @@ function RescheduleModal({ booking, groupData, onClose, onSuccess }) {
   const [slots, setSlots] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState("");
+
+  /** ✅ NEW: ngày cũ ISO + slot cũ để ẩn */
+  const oldDateISO = useMemo(() => {
+    const d = toDateSafe(booking?.startTime);
+    if (!d) return "";
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }, [booking?.startTime]);
+
+  const oldSlotIds = useMemo(() => {
+    return getSlotIdsFromTimes(booking?.startTime, booking?.endTime);
+  }, [booking?.startTime, booking?.endTime]);
+
+  const hiddenSlotIdsForSelectedDate = useMemo(() => {
+    if (!date || !oldDateISO) return [];
+    return date === oldDateISO ? oldSlotIds : [];
+  }, [date, oldDateISO, oldSlotIds]);
+
+  /** ✅ NEW: nếu user đã tick slot bị ẩn -> tự remove khỏi state */
+  useEffect(() => {
+    if (!hiddenSlotIdsForSelectedDate.length) return;
+    setSlots((prev) => prev.filter((id) => !hiddenSlotIdsForSelectedDate.includes(id)));
+  }, [hiddenSlotIdsForSelectedDate]);
 
   const toggleSlot = (id) => {
     setSlots((prev) =>
@@ -1155,24 +1152,34 @@ function RescheduleModal({ booking, groupData, onClose, onSuccess }) {
 
           <div>
             <div className="text-sm font-medium text-gray-700 mb-2">Chọn slot mới</div>
+
+            {/* ✅ NEW: note khi đang ẩn slot buổi cũ */}
+            {hiddenSlotIdsForSelectedDate.length > 0 && (
+              <div className="mb-2 text-xs text-orange-700 bg-orange-50 border border-orange-100 rounded-lg p-2">
+                Slot của <b>buổi cũ</b> đã được ẩn ở ngày này vì đã bị chiếm chỗ/đặt đè.
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-2">
-              {SLOT_DEFS.map((s) => (
-                <label
-                  key={s.id}
-                  className={`flex items-center gap-2 border rounded-xl px-3 py-2 text-sm cursor-pointer ${
-                    slots.includes(s.id) ? "bg-blue-50 border-blue-200" : "bg-white"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={slots.includes(s.id)}
-                    onChange={() => toggleSlot(s.id)}
-                  />
-                  <span>
-                    Slot {s.id} ({s.start} - {s.end})
-                  </span>
-                </label>
-              ))}
+              {SLOT_DEFS
+                .filter((s) => !hiddenSlotIdsForSelectedDate.includes(s.id))
+                .map((s) => (
+                  <label
+                    key={s.id}
+                    className={`flex items-center gap-2 border rounded-xl px-3 py-2 text-sm cursor-pointer ${
+                      slots.includes(s.id) ? "bg-blue-50 border-blue-200" : "bg-white"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={slots.includes(s.id)}
+                      onChange={() => toggleSlot(s.id)}
+                    />
+                    <span>
+                      Slot {s.id} ({s.start} - {s.end})
+                    </span>
+                  </label>
+                ))}
             </div>
           </div>
 
