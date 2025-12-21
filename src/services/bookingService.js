@@ -60,6 +60,14 @@ export const createBookingWithFormat = async (data) => {
       purpose: data.purpose,
       attendeeCount: data.participants
     };
+    
+    // Thêm flag force và overrideReason nếu admin đang override
+    if (data.force === true) {
+      payload.force = true;
+      if (data.overrideReason) {
+        payload.overrideReason = data.overrideReason;
+      }
+    }
 
     console.log('[createBookingWithFormat] Request payload:', payload);
     

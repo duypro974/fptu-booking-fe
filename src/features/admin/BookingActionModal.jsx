@@ -384,7 +384,8 @@ const [pendingConflicts, setPendingConflicts] = useState([]);
     setError("");
 
     try {
-      await createBooking(data);
+      // Truyền flag isOverride = true để backend biết đây là đặt đè
+      await createBooking(data, true);
     } catch (e) {
       console.error("[BookingActionModal] Error during override:", e);
       setError(e.message || "Lỗi khi ghi đè lịch đặt phòng");
@@ -395,7 +396,7 @@ const [pendingConflicts, setPendingConflicts] = useState([]);
     }
   };
 
-  const createBooking = async (data = null) => {
+  const createBooking = async (data = null, isOverride = false) => {
     const bookingInfo = data || bookingData || preparedBookingData;
     if (!bookingInfo) {
       setError("Thiếu thông tin đặt phòng");
@@ -403,15 +404,25 @@ const [pendingConflicts, setPendingConflicts] = useState([]);
     }
 
     try {
-      // ✅ api.createBooking maps to createBookingWithFormat => expects { facilityId, date, slotIds, purpose, participants, isEvent }
-      const result = await api.createBooking({
+      // ✅ api.createBooking maps to createBookingWithFormat => expects { facilityId, date, slotIds, purpose, participants, isEvent, force, overrideReason }
+      const bookingPayload = {
         facilityId: bookingInfo.facilityId,
         date: bookingInfo.date,
         slotIds: bookingInfo.slotIds,
         purpose: bookingInfo.purpose,
         participants: bookingInfo.participants,
         isEvent: bookingInfo.isEvent || false,
-      });
+      };
+      
+      // Thêm flag force và overrideReason nếu đang override
+      if (isOverride) {
+        bookingPayload.force = true;
+        if (overrideReason?.trim()) {
+          bookingPayload.overrideReason = overrideReason.trim();
+        }
+      }
+      
+      const result = await api.createBooking(bookingPayload);
 
       handleClose();
 

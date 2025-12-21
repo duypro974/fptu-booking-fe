@@ -1,6 +1,6 @@
 /* eslint-disable no-unused-vars */
 import { useEffect, useMemo, useState } from "react";
-import { X, Clock, Info, RefreshCw, Eye, CalendarClock } from "lucide-react";
+import { X, Clock, Info, RefreshCw, Eye, CalendarClock, AlertCircle } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
@@ -536,14 +536,34 @@ export default function MyBookings() {
                       className={`hover:bg-gray-50 ${isRecurring ? "bg-blue-50/30" : ""}`}
                     >
                       <td className="p-4 font-medium">
-                        <div className="flex items-center gap-2">
-                          {isRecurring && (
-                            <RefreshCw
-                              className="w-4 h-4 text-blue-600"
-                              title="Đặt phòng định kỳ"
-                            />
-                          )}
-                          <span>{pickFacilityName(item)}</span>
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2">
+                            {isRecurring && (
+                              <RefreshCw
+                                className="w-4 h-4 text-blue-600"
+                                title="Đặt phòng định kỳ"
+                              />
+                            )}
+                            <span>{pickFacilityName(item)}</span>
+                          </div>
+                          {/* Hiển thị thông tin dời lịch nếu có (từ booking history) */}
+                          {(() => {
+                            // Kiểm tra trong history xem có previousFacilityId không
+                            const history = item?.history || item?.bookingHistories || [];
+                            const moveHistory = history.find(h => h.previousFacilityId != null);
+                            if (moveHistory) {
+                              // Cần tìm tên phòng cũ từ previousFacilityId
+                              // Nếu không có tên, chỉ hiển thị thông báo chung
+                              const moveReason = moveHistory.changeReason || "Đã dời lịch do bảo trì phòng";
+                              return (
+                                <div className="flex items-center gap-1 text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded mt-1">
+                                  <AlertCircle className="w-3 h-3" />
+                                  <span>{moveReason}</span>
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
                         </div>
                       </td>
 
@@ -901,6 +921,11 @@ function RecurringDetailModal({
                         const replacementStatus = normalizeStatus(replacement?.status);
 
                         const hasReplacement = !!replacement;
+                        // Kiểm tra thông tin dời lịch do bảo trì từ booking history
+                        const bookingHistory = booking?.history || booking?.bookingHistories || [];
+                        const moveHistory = bookingHistory.find(h => h.previousFacilityId != null);
+                        const isMovedDueToMaintenance = !!moveHistory;
+                        const moveReason = moveHistory?.changeReason || null;
                         const replacementLabel =
                           replacementStatus === "PENDING"
                             ? "Đã gửi yêu cầu đổi lịch"
@@ -924,6 +949,15 @@ function RecurringDetailModal({
                               </div>
                               <div className="text-xs text-gray-600">{bookingSlot}</div>
 
+                              {/* ✅ Hiển thị thông tin dời lịch do bảo trì nếu có */}
+                              {isMovedDueToMaintenance && moveReason && (
+                                <div className="mt-2 text-xs">
+                                  <div className="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-orange-50 border border-orange-100 text-orange-700">
+                                    <AlertCircle className="w-4 h-4" />
+                                    <span className="font-medium">{moveReason}</span>
+                                  </div>
+                                </div>
+                              )}
                               {/* ✅ Hiển thị thông tin buổi thay thế nếu có */}
                               {hasReplacement && (
                                 <div className="mt-2 text-xs">

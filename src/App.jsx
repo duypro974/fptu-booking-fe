@@ -29,6 +29,7 @@ import RoomManagement from "./features/admin/RoomManagement";
 import EquipmentManagement from "./features/admin/EquipmentManagement";
 import ClubManagement from "./features/admin/ClubManagement";
 import ReportManagement from "./features/admin/ReportManagement";
+import MaintenanceManagement from "./features/admin/MaintenanceManagement";
 import HistoryLog from "./features/admin/HistoryLog";
 
 // Security
@@ -187,6 +188,7 @@ function App() {
                 <Route path="admin-facility/equipment" element={<EquipmentManagement />} />
                 <Route path="admin-facility/clubs" element={<ClubManagement />} />
                 <Route path="admin-facility/reports" element={<ReportManagement />} />
+                <Route path="admin-facility/maintenance" element={<MaintenanceManagement />} />
                 <Route path="admin-facility/history" element={<HistoryLog />} />
               </Route>
             </Route>
