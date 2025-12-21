@@ -556,7 +556,8 @@ export default function CheckInScanner() {
                   required
                   value={reportData.category}
                   onChange={(e) => setReportData({ ...reportData, category: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none appearance-none"
+                  disabled={reportType === "facility"}
                 >
                   {reportType === "booking" ? (
                     <>
@@ -567,14 +568,14 @@ export default function CheckInScanner() {
                       <option value="OTHER">Khác</option>
                     </>
                   ) : (
-                    <>
-                      <option value="DAMAGE">Hư hỏng</option>
-                      <option value="MAINTENANCE">Bảo trì</option>
-                      <option value="CLEANING">Vệ sinh</option>
-                      <option value="OTHER">Khác</option>
-                    </>
+                    <option value="DAMAGE">Hư hỏng</option>
                   )}
                 </select>
+                {reportType === "facility" && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Loại sự cố mặc định: Hư hỏng
+                  </p>
+                )}
               </div>
             </div>
 
