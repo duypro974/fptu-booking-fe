@@ -63,16 +63,12 @@ export default function CheckInScanner() {
 
   const handleSearch = async () => {
     const kw = keyword.trim();
-    if (!kw) {
-      setError("Vui lòng nhập từ khóa tìm kiếm");
-      setBookings([]);
-      return;
-    }
 
     setLoading(true);
     setError("");
     try {
-      const data = await searchCheckinBookings(kw);
+      // Khi keyword rỗng, API sẽ trả về bookings cần check-in của ngày hôm nay
+      const data = await searchCheckinBookings(kw || "");
 
       console.log("[Guard Search] keyword =", kw);
       console.log("[Guard Search] raw response =", data);
@@ -96,7 +92,7 @@ export default function CheckInScanner() {
     setProcessingId(bookingId);
     try {
       await checkInBooking(bookingId);
-      if (keyword.trim()) await handleSearch();
+      await handleSearch(); // Reload danh sách sau khi check-in
     } catch (err) {
       alert(
         err?.response?.data?.message ||
@@ -112,7 +108,7 @@ export default function CheckInScanner() {
     setProcessingId(bookingId);
     try {
       await checkOutBooking(bookingId);
-      if (keyword.trim()) await handleSearch();
+      await handleSearch(); // Reload danh sách sau khi check-out
     } catch (err) {
       alert(
         err?.response?.data?.message ||
@@ -482,9 +478,11 @@ export default function CheckInScanner() {
         </Card>
       )}
 
-      {!loading && keyword.trim() && bookings.length === 0 && (
+      {!loading && bookings.length === 0 && !error && (
         <Card className="p-8 text-center text-gray-500">
-          Không tìm thấy đơn đặt phòng nào.
+          {keyword.trim() 
+            ? "Không tìm thấy đơn đặt phòng nào." 
+            : "Không có đơn đặt phòng cần check-in cho ngày hôm nay."}
         </Card>
       )}
 

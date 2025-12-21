@@ -349,11 +349,13 @@ export default function BookingDetailModal({ isOpen, onClose, bookingId, onSucce
       );
 
       // Only reject slots that are both PENDING and unchecked (with reason)
+      // For recurring booking slots, use cancelByAdmin instead of rejectBooking
+      // because backend may not allow rejecting individual slots in a recurring group
       const toReject = pendingSlots.filter((child) => 
         !selectedSlots.has(child.id) && rejectionReasons[child.id]?.trim()
       );
       const rejectPromises = toReject.map((child) =>
-        api.rejectBooking(child.id, rejectionReasons[child.id], user?.name || "Admin")
+        api.cancelByAdmin(child.id, rejectionReasons[child.id])
       );
 
       if (approvePromises.length === 0 && rejectPromises.length === 0) {

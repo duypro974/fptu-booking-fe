@@ -245,7 +245,6 @@ export default function ReportManagement() {
                       <th className="p-4 font-semibold text-gray-700">Phòng</th>
                       <th className="p-4 font-semibold text-gray-700">Người báo</th>
                       <th className="p-4 font-semibold text-gray-700">Ngày tạo</th>
-                      <th className="p-4 font-semibold text-gray-700">Trạng thái</th>
                       <th className="p-4 font-semibold text-gray-700 text-right">Hành động</th>
                     </tr>
                   </thead>
@@ -287,9 +286,6 @@ export default function ReportManagement() {
                             <Calendar className="w-4 h-4" />
                             {formatDate(report.createdAt || report.created_at || report.date)}
                           </div>
-                        </td>
-                        <td className="p-4">
-                          {getStatusBadge(report.status)}
                         </td>
                         <td className="p-4">
                           <div className="flex justify-end">
@@ -416,11 +412,6 @@ export default function ReportManagement() {
                     </div>
 
                     {/* Status */}
-                    <div>
-                      <label className="text-sm font-medium text-gray-500">Trạng thái</label>
-                      <div className="mt-1">{getStatusBadge(selectedReport.status)}</div>
-                    </div>
-
                     {/* Facility */}
                     <div>
                       <label className="text-sm font-medium text-gray-500">Phòng</label>
